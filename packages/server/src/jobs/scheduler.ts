@@ -142,23 +142,13 @@ export class Scheduler {
   }
 
   /**
-   * Deliver queued email. Without an SMTP transport configured the outbox
-   * simply accumulates, which is the intended behaviour for a self-hosted
-   * instance that only uses in-app notifications.
+   * Deliver queued email through the configured transport.
+   *
+   * With no transport configured the outbox simply accumulates, and
+   * `MailService.drain` records why — which is the correct behaviour for a
+   * self-hosted instance that only uses in-app notifications.
    */
   private async drainEmailOutbox(): Promise<void> {
-    const pending = this.services.db.all<{ id: number }>(
-      "SELECT id FROM email_outbox WHERE status = 'queued' AND attempts < 5 ORDER BY created_at ASC LIMIT 25",
-    );
-    if (pending.length === 0) return;
-
-    for (const row of pending) {
-      // No transport is configured in this build; mark the attempt so the row
-      // does not spin forever, and leave the body for an operator to inspect.
-      this.services.db.run(
-        'UPDATE email_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?',
-        ['No SMTP transport configured', row.id],
-      );
-    }
+    await this.services.mail.drain(25);
   }
 }

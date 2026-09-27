@@ -151,7 +151,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Rich-text comment logs | ✅ | Markdown bodies, edited/deleted tracked on the timeline |
 | @mentions | ✅ | Resolved to users who can see the issue; unknown handles stay literal |
 | Multi-format attachments | ✅ | SHA-256 content-addressed blobs, MIME allow-list, magic-byte check |
-| Automated email/system notifications | ✅ | 16 event types, per-user preferences, durable `email_outbox` |
+| Automated email/system notifications | ✅ | 16 event types, per-user preferences, durable `email_outbox` drained over SMTP or a relay webhook |
 | Interactive Kanban boards | ✅ | Fractional positions, optimistic moves, WIP badges |
 | Real-time co-authoring presence | ✅ | `realtime/gateway.ts`, heartbeat + pruning |
 | Built-in video recording | ❌ | Not implemented. See [Roadmap](#roadmap). |
@@ -175,7 +175,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Full-text search queries | ✅ | FTS5 over issues and comments, with bm25 ranking |
 | Custom filtering | ✅ | 20 filter dimensions, keyset pagination |
 | Data export | ✅ | JSON, RFC-4180 CSV, Markdown |
-| Git version-control linkages | ✅ | Per-issue branch/commit fields + GitLab project linkage |
+| Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking |
 | Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid |
 | SLA breach countdown timers | ✅ | Response + resolution clocks, business-hours aware |
 | Live webhook message broadcasting | ✅ | Signed outbound deliveries, retries, auto-disable |
@@ -293,6 +293,26 @@ Everything has a working default; set only what you need.
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` |
 | `LOG_LEVEL` | `info` | Pino log level |
 | `BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` | — | Seed an admin on first boot |
+
+### Outbound email
+
+Notifications queue in `email_outbox` and a background job drains them. With
+nothing configured they simply accumulate — in-app and WebSocket notifications
+are unaffected.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SMTP_HOST` | — | Enables the SMTP transport |
+| `SMTP_PORT` | `587` | `465` implies implicit TLS |
+| `SMTP_SECURE` | `false` | Force implicit TLS on another port |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | — | AUTH LOGIN credentials |
+| `MAIL_WEBHOOK_URL` | — | POST each message to a relay instead |
+| `MAIL_WEBHOOK_SECRET` | — | Sent as a bearer token to that relay |
+| `MAIL_FROM` / `MAIL_FROM_NAME` | `tracker@localhost` | Envelope sender |
+| `MAIL_MAX_ATTEMPTS` | `5` | Attempts before a row is parked as `failed` |
+
+STARTTLS is only attempted when the server advertises it, and **credentials are
+refused outright** rather than sent over an unencrypted channel.
 
 The encryption key and session secret are **generated and persisted** to
 `DATA_DIR/.secrets.json` on first run (mode `0600`), so a fresh clone starts
@@ -470,11 +490,11 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
   endpoints parse and map what the IdP sends, but do not verify the IdP
   signature. Do not enable federated login against an untrusted IdP until that
   is added; the code marks this in a comment at the call site.
-- No outbound email transport is wired up. Notifications are written to
-  `email_outbox` and the scheduler increments the attempt counter with
-  `last_error = 'No SMTP transport configured'`, so rows accumulate for an
-  operator rather than being lost. In-app notifications and the WebSocket
-  channel are fully functional.
+- The bundled SMTP client speaks only submission: it will not act as a
+  receiving server, and it negotiates STARTTLS rather than exotic extensions.
+  With no `SMTP_*` or `MAIL_WEBHOOK_URL` set, notifications stay in
+  `email_outbox` with the reason recorded, and are delivered once a transport
+  is configured. In-app notifications and the WebSocket channel work either way.
 - Duplicate detection is lexical, not semantic (see above).
 - No rate limiting per API token, only per IP.
 
@@ -487,7 +507,7 @@ Deliberately not built yet, in rough priority order:
 - **Video recording feedback** — browser capture, upload, inline playback
   attached to issues.
 - **Real SSO signature verification** and SAML metadata import.
-- **Outbound email transport** (SMTP configuration plus the outbox drain).
+
 - **A real embedding model** behind the duplicate-detection interface.
 - **Postgres adapter** — the query layer is deliberately portable.
 - Mobile app with biometric login.
