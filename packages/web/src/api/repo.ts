@@ -4,6 +4,18 @@
  * through `api/normalize.ts` before it reaches a component.
  */
 
+import type {
+  BranchImportResult,
+  BranchLinkRule,
+  CreateReferenceInput,
+  CreateRepositoryInput,
+  IssueLinkageSummary,
+  IssueReference,
+  IssueReferenceView,
+  UpdateReferenceInput,
+  Repository,
+} from '@tracker/shared';
+
 import { API, fill, http, type QueryParams } from './client';
 import {
   asArray,
@@ -692,4 +704,210 @@ export async function fetchTransitions(issueId: IssueId): Promise<TransitionChec
   return issueApi.availableTransitions(issueId);
 }
 
+
+/**
+ * Version-control linkage.
+ *
+ * Paths come from the shared `API` constants, so the client cannot drift from
+ * the server. Responses go through the normalising readers because the server
+ * returns snake_case-adjacent shapes that the project has learned to tolerate.
+ */
+export const vcsApi = {
+  async repositories(
+    projectId: ProjectId,
+    signal?: AbortSignal,
+  ): Promise<{ repositories: Repository[]; rules: BranchLinkRule[] }> {
+    const raw = await http.get<unknown>(
+      fill(API.versionControl.repositories, { projectId }),
+      signal !== undefined ? { signal } : undefined,
+    );
+    const record = asRecord(raw);
+    return {
+      repositories: asArray(record['repositories'], 'repositories').map((entry) =>
+        toRepository(entry),
+      ),
+      rules: asArray(record['rules'], 'rules').map((entry) => toBranchLinkRule(entry)),
+    };
+  },
+
+  async createRepository(projectId: ProjectId, input: CreateRepositoryInput): Promise<Repository> {
+    const raw = await http.post<unknown>(fill(API.versionControl.createRepository, { projectId }), input);
+    return toRepository(asRecord(raw));
+  },
+
+  async removeRepository(projectId: ProjectId, repositoryId: number): Promise<void> {
+    await http.delete<unknown>(
+      fill(API.versionControl.removeRepository, { projectId, id: repositoryId }),
+    );
+  },
+
+  async references(
+    issueId: IssueId,
+    signal?: AbortSignal,
+  ): Promise<{ references: IssueReferenceView[]; summary: IssueLinkageSummary }> {
+    const raw = await http.get<unknown>(
+      fill(API.issues.references, { issueId }),
+      signal !== undefined ? { signal } : undefined,
+    );
+    const record = asRecord(raw);
+    return {
+      references: asArray(record['references'], 'references').map((entry) => toReferenceView(entry)),
+      summary: toLinkageSummary(asRecord(record['summary'])),
+    };
+  },
+
+  async addReference(issueId: IssueId, input: CreateReferenceInput): Promise<IssueReference> {
+    const raw = await http.post<unknown>(fill(API.issues.addReference, { issueId }), input);
+    return toReference(asRecord(raw));
+  },
+
+  async updateReference(
+    issueId: IssueId,
+    referenceId: number,
+    patch: UpdateReferenceInput,
+  ): Promise<IssueReference> {
+    const raw = await http.patch<unknown>(
+      fill(API.issues.updateReference, { issueId, id: referenceId }),
+      patch,
+    );
+    return toReference(asRecord(raw));
+  },
+
+  async removeReference(issueId: IssueId, referenceId: number): Promise<void> {
+    await http.delete<unknown>(fill(API.issues.removeReference, { issueId, id: referenceId }));
+  },
+
+  /**
+   * Ask the server what a branch name would resolve to. Lets a developer check
+   * their convention before pushing, instead of discovering it later.
+   */
+  async previewBranch(
+    projectId: ProjectId,
+    repositoryId: number,
+    branch: string,
+  ): Promise<{ issueKey: string | null; issue: { id: number; key: string; title: string } | null }> {
+    const raw = await http.post<unknown>(
+      fill(`${API.versionControl.branchRules}/preview`, { projectId, id: repositoryId }),
+      { branch },
+    );
+    const record = asRecord(raw);
+    const issue = record['issue'];
+    return {
+      issueKey: strOrNull(record['issueKey']),
+      issue: isRecord(issue)
+        ? { id: num(issue['id']), key: str(issue['key']), title: str(issue['title']) }
+        : null,
+    };
+  },
+
+  async importBranches(
+    projectId: ProjectId,
+    repositoryId: number,
+    branches: Array<{ name: string; headSha?: string | null; url?: string | null }>,
+  ): Promise<BranchImportResult> {
+    const raw = await http.post<unknown>(
+      fill(API.versionControl.importBranches, { projectId, id: repositoryId }),
+      { branches },
+    );
+    const record = asRecord(asRecord(raw));
+    return {
+      scanned: num(record['scanned']),
+      linked: num(record['linked']),
+      updated: num(record['updated']),
+      unresolved: asArray(record['unresolved'], 'unresolved').map((entry) => {
+        const item = asRecord(entry);
+        return { branch: str(item['branch']), issueKey: str(item['issueKey']) };
+      }),
+      skipped: asArray(record['skipped'], 'skipped').map((entry) => {
+        const item = asRecord(entry);
+        return { branch: str(item['branch']), reason: str(item['reason']) };
+      }),
+    };
+  },
+};
+
+function toRepository(entry: unknown): Repository {
+  const record = asRecord(entry);
+  return {
+    id: num(record['id']),
+    projectId: num(record['projectId']),
+    provider: str(record['provider']) as Repository['provider'],
+    name: str(record['name']),
+    baseUrl: str(record['baseUrl']),
+    externalId: strOrNull(record['externalId']),
+    defaultBranch: str(record['defaultBranch']),
+    gitlabConnectionId:
+      record['gitlabConnectionId'] === null || record['gitlabConnectionId'] === undefined
+        ? null
+        : num(record['gitlabConnectionId']),
+    createdAt: str(record['createdAt']),
+    updatedAt: str(record['updatedAt']),
+  };
+}
+
+function toReference(entry: unknown): IssueReference {
+  const record = asRecord(entry);
+  return {
+    id: num(record['id']),
+    issueId: num(record['issueId']),
+    repositoryId: num(record['repositoryId']),
+    kind: str(record['kind']) as IssueReference['kind'],
+    provider: str(record['provider']) as IssueReference['provider'],
+    ref: str(record['ref']),
+    headSha: strOrNull(record['headSha']),
+    title: str(record['title']),
+    state: str(record['state']) as IssueReference['state'],
+    url: strOrNull(record['url']),
+    autoDetected: bool(record['autoDetected']),
+    linkedBy: record['linkedBy'] === null || record['linkedBy'] === undefined ? null : num(record['linkedBy']),
+    createdAt: str(record['createdAt']),
+    updatedAt: str(record['updatedAt']),
+  };
+}
+
+function toReferenceView(entry: unknown): IssueReferenceView {
+  const record = asRecord(entry);
+  return {
+    ...toReference(entry),
+    repositoryName: str(record['repositoryName']),
+    repositoryProvider: str(record['repositoryProvider']) as IssueReferenceView['repositoryProvider'],
+    issueKey: str(record['issueKey']),
+    issueTitle: str(record['issueTitle']),
+    isMerged: bool(record['isMerged']),
+  };
+}
+
+function toLinkageSummary(entry: unknown): IssueLinkageSummary {
+  const record = asRecord(entry);
+  const latest = record['latest'];
+  return {
+    issueId: num(record['issueId']),
+    branches: num(record['branches']),
+    commits: num(record['commits']),
+    mergeRequests: num(record['mergeRequests']),
+    merged: num(record['merged']),
+    latest:
+      isRecord(latest)
+        ? {
+            id: num(latest['id']),
+            kind: str(latest['kind']) as IssueReference['kind'],
+            ref: str(latest['ref']),
+            url: strOrNull(latest['url']),
+          }
+        : null,
+  };
+}
+
+function toBranchLinkRule(entry: unknown): BranchLinkRule {
+  const record = asRecord(entry);
+  return {
+    id: num(record['id']),
+    projectId: num(record['projectId']),
+    repositoryId: num(record['repositoryId']),
+    pattern: str(record['pattern']),
+    stripPrefixes: asArray(record['stripPrefixes'], 'stripPrefixes').map(String),
+    enabled: bool(record['enabled']),
+    lastImportedAt: strOrNull(record['lastImportedAt']),
+  };
+}
 export type { SyncMode, WorkflowTransition, DependencyKind };

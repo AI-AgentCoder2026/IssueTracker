@@ -463,3 +463,152 @@ describe('guest access', () => {
     assert.equal(redeemed.body.guest.role, 'viewer');
   });
 });
+
+describe('version-control linkage over HTTP', () => {
+  let issueId = 0;
+  let repositoryId = 0;
+
+  before(async () => {
+    const created = await post('/api/issues', {
+      projectId,
+      title: 'issue with linked work',
+      description: '',
+      type: 'task',
+      priority: 'medium',
+    });
+    issueId = created.body.issue.id;
+
+    const repository = await post(`/api/projects/${projectId}/repositories`, {
+      provider: 'gitlab',
+      name: 'platform/api-gateway',
+      baseUrl: 'https://gitlab.example.com/platform/api-gateway',
+      defaultBranch: 'main',
+    });
+    repositoryId = repository.body.repository.id;
+  });
+
+  it('rejects a plaintext repository URL', async () => {
+    const response = await post(`/api/projects/${projectId}/repositories`, {
+      provider: 'gitlab',
+      name: 'bad-url',
+      baseUrl: 'http://insecure.example.com/x',
+      defaultBranch: 'main',
+    });
+    assert.equal(response.status, 422);
+  });
+
+  it('creates a repository', async () => {
+    const response = await get(`/api/projects/${projectId}/repositories`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(response.body.repositories.some((r: any) => r.id === repositoryId));
+  });
+
+  it('links a branch to an issue', async () => {
+    const response = await post(`/api/issues/${issueId}/references`, {
+      repositoryId,
+      kind: 'branch',
+      ref: 'feature/E2E-1-add-login',
+      headSha: 'a'.repeat(40),
+      state: 'open',
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.reference.kind, 'branch');
+  });
+
+  it('rejects a javascript: URL, which would become an anchor href', async () => {
+    const response = await post(`/api/issues/${issueId}/references`, {
+      repositoryId,
+      kind: 'commit',
+      ref: 'b'.repeat(40),
+      url: 'javascript:alert(1)',
+    });
+    assert.equal(response.status, 422, 'an unsafe scheme must not be stored');
+  });
+
+  it('rejects a non-hexadecimal headSha', async () => {
+    const response = await post(`/api/issues/${issueId}/references`, {
+      repositoryId,
+      kind: 'commit',
+      ref: 'c'.repeat(40),
+      headSha: 'not-a-sha',
+    });
+    assert.equal(response.status, 422);
+  });
+
+  it('returns the references and a summary', async () => {
+    const response = await get(`/api/issues/${issueId}/references`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.references.length, 1);
+    assert.equal(response.body.summary.branches, 1);
+    assert.equal(response.body.references[0].repositoryName, 'platform/api-gateway');
+  });
+
+  it('marks a reference merged and records it', async () => {
+    const list = await get(`/api/issues/${issueId}/references`);
+    const referenceId = list.body.references[0].id;
+
+    const response = await patch(`/api/issues/${issueId}/references/${referenceId}`, {
+      state: 'merged',
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.reference.state, 'merged');
+  });
+
+  it('previews what a branch name resolves to', async () => {
+    const response = await post(
+      `/api/projects/${projectId}/repositories/${repositoryId}/branch-rules/preview`,
+      { branch: 'feature/E2E-1-whatever' },
+    );
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    // With no rule configured nothing matches, and that is reported honestly.
+    assert.equal(response.body.issueKey, null);
+  });
+
+  it('imports branches once a naming rule exists, and is idempotent', async () => {
+    const rule = await post(`/api/projects/${projectId}/repositories/${repositoryId}/branch-rules`, {
+      pattern: '^(?<key>E2E-\\d+)',
+      stripPrefixes: ['feature/'],
+      enabled: true,
+    });
+    assert.equal(rule.status, 201, JSON.stringify(rule.body));
+
+    const first = await post(
+      `/api/projects/${projectId}/repositories/${repositoryId}/branches/import`,
+      { branches: [{ name: 'feature/E2E-1-auto-linked' }] },
+    );
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.result.linked, 1);
+
+    const second = await post(
+      `/api/projects/${projectId}/repositories/${repositoryId}/branches/import`,
+      { branches: [{ name: 'feature/E2E-1-auto-linked' }] },
+    );
+    assert.equal(second.body.result.linked, 0, 'a second pass creates nothing new');
+    assert.equal(second.body.result.updated, 1);
+  });
+
+  it('reports a branch naming a non-existent issue rather than dropping it', async () => {
+    const response = await post(
+      `/api/projects/${projectId}/repositories/${repositoryId}/branches/import`,
+      { branches: [{ name: 'feature/E2E-9999-typo' }] },
+    );
+    assert.equal(response.body.result.unresolved.length, 1);
+    assert.equal(response.body.result.unresolved[0].issueKey, 'E2E-9999');
+  });
+
+  it('rejects a rule with Python-style named groups', async () => {
+    const response = await post(`/api/projects/${projectId}/repositories/${repositoryId}/branch-rules`, {
+      pattern: '^(?P<key>E2E-\\d+)',
+      enabled: true,
+    });
+    assert.equal(response.status, 422, 'JS spells a named group (?<key>...)');
+  });
+
+  it('unlinks a reference', async () => {
+    const list = await get(`/api/issues/${issueId}/references`);
+    const referenceId = list.body.references[0].id;
+    const response = await call('DELETE', `/api/issues/${issueId}/references/${referenceId}`);
+    assert.equal(response.status, 200);
+    assert.equal((await get(`/api/issues/${issueId}/references`)).body.references.length, 0);
+  });
+});

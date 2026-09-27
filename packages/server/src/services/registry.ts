@@ -15,6 +15,7 @@ import { RealtimeHub } from '../realtime/hub.ts';
 import { ActivityService } from './activity.service.ts';
 import { AuditService } from './audit.service.ts';
 import { NotificationService } from './notification.service.ts';
+import { MailService } from './mail.service.ts';
 import { AuthService } from './auth.service.ts';
 import { ProjectService } from './project.service.ts';
 import { WorkflowService } from './workflow.service.ts';
@@ -29,6 +30,7 @@ import { ArchiveService } from './archive.service.ts';
 import { TimingService } from './timing.service.ts';
 import { SlaService } from './sla.service.ts';
 import { DashboardService } from './dashboard.service.ts';
+import { VersionControlService } from './versioncontrol.service.ts';
 import { GitLabService } from './gitlab/sync.service.ts';
 import { WebhookService } from './webhook.service.ts';
 import type { Services } from './context.ts';
@@ -48,6 +50,7 @@ export function createServices(options: RegistryOptions): Services {
   const audit = new AuditService(db);
   const activity = new ActivityService(db);
   const notifications = new NotificationService(db);
+  const mail = new MailService(config, db);
 
   // Phase 2: an object that already exposes phase 1. Services hold this
   // reference and fill in the rest as construction proceeds.
@@ -74,6 +77,7 @@ export function createServices(options: RegistryOptions): Services {
   services.timing = new TimingService(services);
   services.sla = new SlaService(services);
   services.dashboards = new DashboardService(services);
+  services.versionControl = new VersionControlService(services);
   services.gitlab = new GitLabService(services);
   services.webhooks = new WebhookService(services);
 

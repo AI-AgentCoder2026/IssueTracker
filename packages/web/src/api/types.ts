@@ -175,3 +175,19 @@ export interface NotificationFeed {
   notifications: Notification[];
   unreadCount: number;
 }
+
+export type {
+  BranchImportResult,
+  BranchLinkRule,
+  CreateBranchLinkRuleInput,
+  CreateReferenceInput,
+  CreateRepositoryInput,
+  IssueLinkageSummary,
+  IssueReference,
+  IssueReferenceView,
+  ReferenceKind,
+  ReferenceState,
+  Repository,
+  UpdateReferenceInput,
+  VcsProvider,
+} from '@tracker/shared';

@@ -20,6 +20,7 @@ import type { RealtimeHub } from '../realtime/hub.ts';
 import type { ActivityService } from './activity.service.ts';
 import type { AuditService, RequestAuditContext } from './audit.service.ts';
 import type { NotificationService } from './notification.service.ts';
+import type { MailService } from './mail.service.ts';
 
 export type { RequestAuditContext };
 import type { AuthService } from './auth.service.ts';
@@ -34,6 +35,7 @@ import type { ExportService } from './export.service.ts';
 import type { DedupeService } from './dedupe.service.ts';
 import type { ArchiveService } from './archive.service.ts';
 import type { TimingService } from './timing.service.ts';
+import type { VersionControlService } from './versioncontrol.service.ts';
 import type { SlaService } from './sla.service.ts';
 import type { DashboardService } from './dashboard.service.ts';
 import type { GitLabService } from './gitlab/sync.service.ts';
@@ -53,6 +55,7 @@ export interface Services {
   audit: AuditService;
   activity: ActivityService;
   notifications: NotificationService;
+  mail: MailService;
   realtime: RealtimeHub;
 
   // Identity
@@ -80,6 +83,7 @@ export interface Services {
   dashboards: DashboardService;
 
   // Integrations
+  versionControl: VersionControlService;
   gitlab: GitLabService;
   webhooks: WebhookService;
 }

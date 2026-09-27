@@ -102,7 +102,7 @@ export const API = {
     unwatch: '/api/issues/:issueId/watch',
     archive: '/api/issues/:issueId/archive',
     duplicates: '/api/issues/:issueId/duplicates',
-    // Comments / attachments are nested under the issue.
+    // Comments / attachments / references are nested under the issue.
     comments: '/api/issues/:issueId/comments',
     createComment: '/api/issues/:issueId/comments',
     updateComment: '/api/comments/:commentId',
@@ -111,6 +111,25 @@ export const API = {
     upload: '/api/issues/:issueId/attachments',
     attachmentDownload: '/api/attachments/:id',
     removeAttachment: '/api/attachments/:id',
+    // Version-control linkage.
+    references: '/api/issues/:issueId/references',
+    addReference: '/api/issues/:issueId/references',
+    updateReference: '/api/issues/:issueId/references/:id',
+    removeReference: '/api/issues/:issueId/references/:id',
+    linkageSummary: '/api/issues/:issueId/linkage',
+  },
+
+  // -- version control ----------------------------------------------------
+  versionControl: {
+    repositories: '/api/projects/:projectId/repositories',
+    createRepository: '/api/projects/:projectId/repositories',
+    removeRepository: '/api/projects/:projectId/repositories/:id',
+    /** Project-wide view of every linked artefact. */
+    projectReferences: '/api/projects/:projectId/references',
+    branchRules: '/api/projects/:projectId/repositories/:id/branch-rules',
+    createBranchRule: '/api/projects/:projectId/repositories/:id/branch-rules',
+    removeBranchRule: '/api/projects/:projectId/repositories/:id/branch-rules/:ruleId',
+    importBranches: '/api/projects/:projectId/repositories/:id/branches/import',
   },
 
   // -- board ---------------------------------------------------------------

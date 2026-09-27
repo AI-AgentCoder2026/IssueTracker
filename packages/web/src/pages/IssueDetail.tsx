@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useMutation, useQuery } from '../api/hooks';
-import { issueApi, projectApi, workflowApi } from '../api/repo';
+import { DevelopmentPanel } from '../components/DevelopmentPanel';
+import { issueApi, projectApi, vcsApi, workflowApi } from '../api/repo';
 import {
   DEPENDENCY_KINDS,
   ISSUE_PRIORITIES,
@@ -69,6 +70,9 @@ export function IssueDetail(): JSX.Element {
     [issueId],
   );
   const workflowQuery = useQuery((signal) => workflowApi.get(projectId, signal), [projectId]);
+// Repositories back the Development panel; a project with none simply renders
+// the panel in its empty state rather than erroring.
+const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, signal), [projectId]);
   const membersQuery = useQuery<MemberView[]>((signal) => projectApi.members(projectId, signal), [projectId]);
 
 
@@ -362,6 +366,13 @@ export function IssueDetail(): JSX.Element {
               error={fieldErrors.body}
             />
           </section>
+
+          <DevelopmentPanel
+            issueId={issueId}
+            projectId={projectId}
+            repositories={repositoriesQuery.data?.repositories ?? []}
+            onError={(message) => toast.error(message)}
+          />
 
           <section className="card card-pad stack" aria-label="Timeline">
             <h2>Timeline</h2>

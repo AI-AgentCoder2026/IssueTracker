@@ -1372,3 +1372,51 @@ table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
     transition-duration: 0.001ms !important;
   }
 }
+
+/* -- development panel ------------------------------------------------- */
+
+/* The ref can be arbitrarily long (a branch name plus a SHA), so the row
+   truncates rather than wrapping the action buttons out of view. */
+.reference-row {
+  gap: var(--space-3);
+  align-items: center;
+  min-width: 0;
+}
+
+.reference-row > span:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.reference-row .truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-row code {
+  font-size: 0.85em;
+}
+
+/* `details`/`summary` is used for the branch-name checker. */
+.card details > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.card details[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

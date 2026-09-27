@@ -48,6 +48,7 @@ import { issueRoutes } from './routes/issues.routes.ts';
 import { gitlabRoutes, gitlabWebhookRoutes, webhookRoutes } from './routes/gitlab.routes.ts';
 import { dashboardRoutes } from './routes/dashboards.routes.ts';
 import { slaRoutes } from './routes/sla.routes.ts';
+import { versionControlRoutes } from './routes/versioncontrol.routes.ts';
 
 export interface BuildAppOptions {
   config?: Partial<Config>;
@@ -219,6 +220,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<TrackerAp
 
   await app.register(dashboardRoutes);
   await app.register(slaRoutes);
+  await app.register(versionControlRoutes);
   await app.register(gitlabRoutes);
   await app.register(webhookRoutes);
   await app.register(adminRoutes);
