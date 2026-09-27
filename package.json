@@ -1,0 +1,31 @@
+{
+  "name": "issuetracker",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Open source, self-hosted issue tracker with configurable GitLab source-of-truth sync, role-based dashboards, and SLA timelines.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @tracker/shared && npm run build --workspace @tracker/server && npm run build --workspace @tracker/web",
+    "dev": "npm run dev --workspace @tracker/server & npm run dev --workspace @tracker/web",
+    "dev:server": "npm run dev --workspace @tracker/server",
+    "dev:web": "npm run dev --workspace @tracker/web",
+    "start": "npm run start --workspace @tracker/server",
+    "migrate": "npm run migrate --workspace @tracker/server",
+    "seed": "npm run seed --workspace @tracker/server",
+    "test": "npm run test --workspace @tracker/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

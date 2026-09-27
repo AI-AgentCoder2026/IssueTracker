@@ -1,0 +1,32 @@
+# Normalise line endings so the working tree looks identical on every platform
+# and diffs never churn on Windows checkouts.
+* text=auto eol=lf
+
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.json  text eol=lf
+*.sql   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Lockfiles and generated bundles must never be rewritten.
+package-lock.json text eol=lf
+packages/web/dist/** -text -diff
+packages/*/dist/** -text -diff
+
+# Binary assets.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.db   binary
