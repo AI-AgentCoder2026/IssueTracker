@@ -217,8 +217,9 @@ never re-imported, and pushed-note dedup is by exact body.
 
 Priority labels, title prefixes, comment markers, hierarchy mapping and label
 normalisation are each verified by a round-trip test in
-`test/gitlab.test.ts`, so an inverted mapping fails CI rather than corrupting data
-in production.
+`test/gitlab.test.ts`, which drives a real HTTP server speaking the GitLab v4 API.
+That is deliberate: a mocked client will happily agree with a mis-shaped
+request, which is exactly the class of bug that turns a sync into data loss.
 
 ---
 
@@ -449,20 +450,19 @@ bind every value.
 ```
 packages/server/test/
 ├── helpers.ts             isolated in-memory database per test
-├── rbac.test.ts           permission matrix, ownership fallback
-├── audit.test.ts          hash chain, immutability, tamper detection
-├── workflow.test.ts       transition rules, WIP limits, timing stamps
-├── issue.test.ts          lifecycle, nesting cycles, dependencies, board
-├── search.test.ts         FTS5, filters, facets, export
-├── dedupe.test.ts         similarity strategies, normalisation
-├── gitlab.test.ts         source-of-truth modes, conflict resolution, loops
-├── dashboards.test.ts     role scoping, all 16 widget types
-├── oidc.test.ts           JWKS verification, forged and replayed tokens
-├── saml.test.ts           XML-DSIG verification, signature wrapping
-├── webauthn.test.ts       challenge lifecycle, cloning, lockout
+├── helpers.ts            per-test in-memory database and fixtures
+├── rbac.test.ts          permission matrix, ownership fallback
+├── audit.test.ts         hash chain, immutability, tamper detection
+├── crypto-time.test.ts   password hashing, tokens, encryption, scrubbing
+├── issue.test.ts         lifecycle, nesting cycles, dependencies, board
+├── workflow.test.ts      transition rules, WIP limits, timing stamps
 ├── versioncontrol.test.ts branch naming rules, reference ownership
-├── mail.test.ts           message construction, SMTP round trip
-└── api.test.ts            end-to-end over HTTP
+├── mail.test.ts          message construction, SMTP round trip
+├── oidc.test.ts          JWKS verification, forged and replayed tokens
+├── saml.test.ts          XML-DSIG verification, signature wrapping
+├── webauthn.test.ts      challenge lifecycle, cloning, lockout
+├── gitlab.test.ts        source-of-truth modes, conflict resolution, loops
+└── api.test.ts           end-to-end over HTTP
 ```
 
 Every test gets its own in-memory database, so suites are isolated and can run

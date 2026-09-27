@@ -1021,20 +1021,49 @@ export class GitLabService {
     });
   }
 
-  // =========================================================================
-  // Internals: push
-  // =========================================================================
-
   /**
    * Links that still need a push. Everything else was either pushed or is
    * waiting on GitLab.
+   *
+   * Two sources matter here, and the second is the one that is easy to forget:
+   * a **newly created local issue has no link row at all**. Iterating links
+   * alone therefore never pushes it, so the first issue a project creates
+   * would silently never appear in GitLab. A link row is created up front with
+   * a NULL `external_id` and a `local_only` state, after which later passes
+   * find it by the ordinary path.
    */
   private pushCandidates(connection: ConnectionRow): LinkRow[] {
+    // 1. Give every never-mirrored local issue a pending link. NULL
+    //    `external_id` marks "no remote object yet", and SQLite treats those
+    //    as distinct, so several can queue at once.
+    this.services.db.run(
+      `INSERT OR IGNORE INTO gitlab_external_links
+         (connection_id, issue_id, external_id, sync_state, created_at)
+       SELECT ?, i.id, NULL, 'local_only', ?
+       FROM issues i
+       WHERE i.project_id = ? AND i.archived = 0
+         AND NOT EXISTS (
+           SELECT 1 FROM gitlab_external_links r
+           WHERE r.connection_id = ? AND r.issue_id = i.id
+         )
+       ORDER BY i.id`,
+      [connection.id, nowIso(), connection.project_id, connection.id],
+    );
+
+    // 2. Every link for this connection.
+    //
+    //    Selecting only the pending states would mean a *locally edited* issue
+    //    is never pushed, because nothing flags it: the change hook is advisory
+    //    and may not have run. Including synced links costs a local hash
+    //    comparison each, which is cheap; `pushIssue` returns before any HTTP
+    //    call when the hash matches, so no-op suppression is enforced by the
+    //    hash rather than by the query — which is what stops the mirror from
+    //    ping-ponging.
     return this.services.db.all<LinkRow>(
       `SELECT * FROM gitlab_external_links
-        WHERE connection_id = ?
-          AND ( sync_state IN ('local_only','pending_push','error')
-                OR external_id = '' )`,
+       WHERE connection_id = ?
+         AND ( sync_state <> 'gitlab_only'
+               OR external_id IS NULL )`,
       [connection.id],
     );
   }
@@ -1050,8 +1079,11 @@ export class GitLabService {
         const issue = this.loadIssueWithLabels(link.issue_id);
         if (!issue) continue;
         if (!this.shouldPush(connection, issue)) continue;
-        await this.pushIssue(connection, client, issue, link);
-        counters.pushed += 1;
+        // Only count an actual remote write. `pushIssue` short-circuits when the
+        // payload hash is unchanged, and that must not be reported as a push or
+        // the run summary claims work that never happened.
+        const outcome = await this.pushIssue(connection, client, issue, link);
+        if (outcome.wrote) counters.pushed += 1;
       } catch (error) {
         counters.failed += 1;
         this.recordItemFailure(connection, link.issue_id, error);
@@ -1078,7 +1110,7 @@ export class GitLabService {
     issue: IssueWithLabels,
     link: LinkRow,
     actorId: number | null = null,
-  ): Promise<LinkRow> {
+  ): Promise<{ link: LinkRow; wrote: boolean }> {
     const local: LocalIssueLike = {
       key: issue.key,
       title: issue.title,
@@ -1105,18 +1137,20 @@ export class GitLabService {
     });
     const timestamp = nowIso();
 
-    if (link.external_id !== '' && link.last_pushed_hash === hash) {
+    // A NULL `external_id` means there is nothing remote to update yet.
+    if (link.external_id !== null && link.last_pushed_hash === hash) {
       // Nothing changed locally since the last successful push.
       this.services.db.run(
         "UPDATE gitlab_external_links SET sync_state = 'synced', last_error = NULL WHERE id = ?",
         [link.id],
       );
-      return { ...link, sync_state: 'synced', last_error: null };
+      // No change since the last successful push, so nothing was written.
+      return { link: { ...link, sync_state: 'synced', last_error: null }, wrote: false };
     }
 
     const ref = this.projectRef(connection);
     const created =
-      link.external_id === ''
+      link.external_id === null
         ? await client.createIssue(ref, payload)
         : await client.updateIssue(ref, Number(link.external_id), payload);
 
@@ -1147,14 +1181,17 @@ export class GitLabService {
     });
 
     return {
-      ...link,
-      external_id: String(created.iid),
-      external_url: created.web_url ?? null,
-      last_pushed_at: timestamp,
-      last_pushed_hash: hash,
-      remote_updated_at: created.updated_at ?? timestamp,
-      sync_state: 'synced',
-      last_error: null,
+      link: {
+        ...link,
+        external_id: String(created.iid),
+        external_url: created.web_url ?? null,
+        last_pushed_at: timestamp,
+        last_pushed_hash: hash,
+        remote_updated_at: created.updated_at ?? timestamp,
+        sync_state: 'synced',
+        last_error: null,
+      },
+      wrote: true,
     };
   }
 
@@ -1297,9 +1334,36 @@ export class GitLabService {
     }
 
     const mapped = this.mapRemote(connection, remote, project, statusByKey, issue.reporter_id);
-    const differences = localChanged ? this.diffFields(issue, mapped) : [];
+  // Needed either to write a conflict or to decide there is nothing to do, so
+  // they are computed even when the local side has not moved.
+  const differences = this.diffFields(issue, mapped);
 
     if (!localChanged || differences.length === 0) {
+      // Only the remote moved. Whether that edit is adopted must still
+      // respect the source-of-truth choice: under `local_authoritative` a
+      // change made directly in GitLab is discarded, the canonical value is
+      // re-pushed, and the discarded value is recorded so a human can see it.
+      // Taking the fast path unconditionally let GitLab win even when the
+      // connection said it must not - which is the whole point of the setting.
+      if (connection.sync_mode === 'local_authoritative') {
+        for (const difference of differences) {
+          this.recordConflict(
+            connection,
+            issue,
+            difference.field,
+            difference.localValue,
+            difference.gitlabValue,
+            issue.updated_at,
+            remote.updated_at,
+          );
+          counters.conflicts += 1;
+        }
+        const client = this.factory().forRow(connection);
+        const outcome = await this.pushIssue(connection, client, issue, link);
+        if (outcome.wrote) counters.pushed += 1;
+        return;
+      }
+
       this.applyRemote(connection, issue, mapped, remote, link);
       counters.pulled += 1;
       return;
@@ -1789,7 +1853,10 @@ export class GitLabService {
     client: GitLabClient,
     link: LinkRow,
     issue: IssueRow,
-  ): Promise<{ pushed: number; pulled: number }> {    if (!bool(connection.sync_comments) || link.external_id === '') return { pushed: 0, pulled: 0 };
+  ): Promise<{ pushed: number; pulled: number }> {
+    if (!bool(connection.sync_comments) || link.external_id === null) {
+      return { pushed: 0, pulled: 0 };
+    }
     const iid = Number(link.external_id);
     if (!Number.isInteger(iid) || iid <= 0) return { pushed: 0, pulled: 0 };
 
