@@ -165,7 +165,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | SSO / SAML | ✅ | Both verified: OIDC against the provider JWKS (`services/oidc.ts`), SAML via XML-DSIG with wrapping-attack defence (`services/saml.ts`) |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
-| Biometric mobile app login | ❌ | Not implemented. See [Roadmap](#roadmap). |
+| Biometric mobile app login | ⚠️ | Passkeys via WebAuthn — Face ID / Touch ID / fingerprint in any browser. No native app, so no in-app biometric API. |
 | Automatic PII/secret scrubbing | ✅ | `scrubSecrets()` — 11 credential patterns + configurable extras |
 
 ### Analytics and technology
@@ -314,6 +314,19 @@ are unaffected.
 STARTTLS is only attempted when the server advertises it, and **credentials are
 refused outright** rather than sent over an unencrypted channel.
 
+### Passkeys
+
+Passkeys are the browser-native form of biometric login: the user approves with
+Face ID, Touch ID or a fingerprint, and the private key stays in the device's
+secure element. Nothing to configure — the relying-party id is derived from
+`PUBLIC_URL`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WEBAUTHN_RP_ID` | host of `PUBLIC_URL` | Overrides the relying-party id |
+| `WEBAUTHN_RP_NAME` | `Issue Tracker` | Shown in the platform prompt |
+| `WEBAUTHN_EXTRA_ORIGINS` | — | Comma-separated extra origins (e.g. a webview) |
+
 The encryption key and session secret are **generated and persisted** to
 `DATA_DIR/.secrets.json` on first run (mode `0600`), so a fresh clone starts
 immediately without shipping a hard-coded key, and restarting does not
@@ -444,6 +457,11 @@ packages/server/test/
 ├── dedupe.test.ts         similarity strategies, normalisation
 ├── gitlab.test.ts         source-of-truth modes, conflict resolution, loops
 ├── dashboards.test.ts     role scoping, all 16 widget types
+├── oidc.test.ts           JWKS verification, forged and replayed tokens
+├── saml.test.ts           XML-DSIG verification, signature wrapping
+├── webauthn.test.ts       challenge lifecycle, cloning, lockout
+├── versioncontrol.test.ts branch naming rules, reference ownership
+├── mail.test.ts           message construction, SMTP round trip
 └── api.test.ts            end-to-end over HTTP
 ```
 
