@@ -1,7 +1,14 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import {
+  fromWebAuthnJSON,
+  isCredentialAborted,
+  isWebAuthnAvailable,
+  toWebAuthnJSON,
+} from '@tracker/shared';
 import { useAuth } from '../auth/AuthContext';
-import { ApiError } from '../api/client';
+import { ApiError, setSessionId } from '../api/client';
+import { passkeyApi } from '../api/repo';
 import { Button } from '../components/Button';
 import { Field } from '../components/Select';
 import { useToast } from '../components/Toast';
@@ -29,6 +36,39 @@ export function Login(): JSX.Element {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [guestToken, setGuestToken] = useState('');
+
+  // Passkeys are only offered when the browser can actually use them, so the
+  // page never shows a button that cannot work.
+  const [passkeysAvailable, setPasskeysAvailable] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+
+  useEffect(() => {
+    setPasskeysAvailable(isWebAuthnAvailable());
+  }, []);
+
+  const signInWithPasskey = async (): Promise<void> => {
+    setPasskeyBusy(true);
+    try {
+      const begun = await passkeyApi.beginAuthentication(loginName.trim() || undefined);
+      const credential = (await navigator.credentials.get({
+        publicKey: fromWebAuthnJSON(begun.options),
+      })) as unknown;
+      if (!credential) throw new Error('No credential was returned');
+
+      const result = await passkeyApi.finishAuthentication({
+        response: toWebAuthnJSON(credential),
+        challengeId: begun.challengeId,
+      });
+      setSessionId(result.sessionId);
+      navigate('/projects', { replace: true });
+    } catch (error) {
+      // Dismissing the platform sheet is a choice, not a failure.
+      if (isCredentialAborted(error)) return;
+      toast.error(error instanceof Error ? error.message : 'Could not sign in with a passkey');
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
 
   if (isAuthenticated) return <Navigate to="/projects" replace />;
 
@@ -206,6 +246,19 @@ export function Login(): JSX.Element {
             {TITLES[mode]}
           </Button>
         </form>
+
+        {mode === 'login' && passkeysAvailable ? (
+          <div className="stack-sm">
+            <hr />
+            <Button variant="default" block onClick={() => void signInWithPasskey()} loading={passkeyBusy}>
+              Sign in with a passkey
+            </Button>
+            <p className="subtle">
+              Uses Face ID, Touch ID, a fingerprint or your device's screen lock — no
+              password.
+            </p>
+          </div>
+        ) : null}
       </div>
     </div>
   );

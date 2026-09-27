@@ -17,6 +17,7 @@ import { Notifications } from './pages/Notifications';
 import { Projects } from './pages/Projects';
 import { Settings, SettingsGeneral, SettingsLabels } from './pages/Settings';
 import { SettingsGitLab } from './pages/SettingsGitLab';
+import { AccountSettings } from './pages/AccountSettings';
 import { SettingsMembers } from './pages/SettingsMembers';
 import { SettingsWorkflow } from './pages/SettingsWorkflow';
 
@@ -92,6 +93,7 @@ export function App(): JSX.Element {
                 }
               >
                 <Route index element={<Notifications />} />
+                <Route path="account" element={<AccountSettings />} />
               </Route>
               <Route
                 path="/p/:projectId"

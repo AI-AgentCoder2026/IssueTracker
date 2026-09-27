@@ -1,4 +1,23 @@
 /**
+ * Whether a stored file may be displayed in the browser rather than
+ * downloaded.
+ *
+ * Only media types a browser renders passively qualify. Notably absent are
+ * `text/html`, `image/svg+xml` and `application/xhtml+xml`, any of which would
+ * execute script in this origin if served inline - which is why the default
+ * remains a forced download.
+ */
+export function isPlayableInline(mimeType: string): boolean {
+  return (
+    mimeType.startsWith("video/") ||
+    mimeType.startsWith("audio/") ||
+    mimeType === "image/png" ||
+    mimeType === "image/jpeg" ||
+    mimeType === "image/gif" ||
+    mimeType === "image/webp"
+  );
+}
+/**
  * Standalone comment, attachment, notification and admin routes.
  */
 
@@ -63,15 +82,18 @@ export const attachmentRoutes: FastifyPluginAsync = async (app: FastifyInstance)
 
     const { attachment: meta } = ctx.services.attachments.resolveDownloadPath(attachmentId);
 
-    // `Content-Disposition: attachment` plus a sanitised name prevents a stored
-    // file from ever being rendered inline in the browser.
+    // Media a browser renders passively is served `inline` so a <video> or
+    // <img> element can display it. Everything else — notably anything that
+    // could execute script such as text/html or image/svg+xml — is forced to
+    // `attachment`, and `nosniff` stops the browser second-guessing the type.
+    const disposition = isPlayableInline(meta.mimeType) ? 'inline' : 'attachment';
     reply
       .header('Content-Type', meta.mimeType)
       .header('Content-Length', String(meta.sizeBytes))
       .header('X-Content-Type-Options', 'nosniff')
       .header(
         'Content-Disposition',
-        `attachment; filename="${meta.filename.replace(/["\\]/g, '')}"`,
+        `${disposition}; filename="${meta.filename.replace(/["\\]/g, '')}"`,
       );
 
     await ctx.services.attachments.stream(attachmentId, reply.raw);

@@ -144,6 +144,11 @@ export function AppShell({ projectId }: { projectId: ProjectId | null }): JSX.El
               <SideLink to={`${base}/settings/guests`} disabled={base === ''}>
                 Guest access
               </SideLink>
+              {/* Account settings are user-scoped, not project-scoped, so
+                  this link is deliberately outside the project section. */}
+              <SideLink to="/account" disabled={false}>
+                Account
+              </SideLink>
             </ul>
           </div>
         </div>

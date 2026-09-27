@@ -154,7 +154,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Automated email/system notifications | ✅ | 16 event types, per-user preferences, durable `email_outbox` drained over SMTP or a relay webhook |
 | Interactive Kanban boards | ✅ | Fractional positions, optimistic moves, WIP badges |
 | Real-time co-authoring presence | ✅ | `realtime/gateway.ts`, heartbeat + pruning |
-| Built-in video recording | ❌ | Not implemented. See [Roadmap](#roadmap). |
+| Built-in video recording | ✅ | Browser `MediaRecorder` capture, review-before-attach, inline playback (`VideoRecorder.tsx`) |
 
 ### Access and security
 
@@ -522,8 +522,9 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 Deliberately not built yet, in rough priority order:
 
-- **Video recording feedback** — browser capture, upload, inline playback
-  attached to issues.
+- **Video recording with audio across every browser** — capture, review and
+  inline playback all work, but `getDisplayMedia` audio is Chromium-only, and
+  there is no transcription or playback-speed control.
 - SAML metadata import from an IdP, and signed AuthnRequest support.
 
 - **A real embedding model** behind the duplicate-detection interface.

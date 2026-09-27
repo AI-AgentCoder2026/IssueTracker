@@ -21,3 +21,4 @@ export * from './search.ts';
 export * from './common.ts';
 export * from './api.ts';
 export * from './versioncontrol.ts';
+export * from './passkeys.ts';

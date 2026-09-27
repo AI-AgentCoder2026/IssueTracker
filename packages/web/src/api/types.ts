@@ -191,3 +191,10 @@ export type {
   UpdateReferenceInput,
   VcsProvider,
 } from '@tracker/shared';
+export type {
+  PasskeyAttachment,
+  PasskeyAuthenticationResponse,
+  PasskeyCredentialSummary,
+  PasskeyListResponse,
+  PasskeyRegistrationResponse,
+} from '@tracker/shared';

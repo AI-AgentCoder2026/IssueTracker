@@ -12,11 +12,19 @@ import type {
   IssueLinkageSummary,
   IssueReference,
   IssueReferenceView,
+  PasskeyAttachment,
+  PasskeyAuthenticationResponse,
+  PasskeyListResponse,
+  PasskeyRegistrationResponse,
   UpdateReferenceInput,
   Repository,
 } from '@tracker/shared';
 
 import { API, fill, http, type QueryParams } from './client';
+import {
+  passkeyAuthenticationResponseSchema,
+  passkeyRegistrationResponseSchema,
+} from '@tracker/shared';
 import {
   asArray,
   asRecord,
@@ -265,6 +273,20 @@ export const authApi = {
     }),
   redeemGuestToken: (token: string): Promise<AuthResponse> =>
     http.post<unknown>(API.auth.guestRedeem, { token }).then(toAuthResponse),
+
+  /** Profile fields the account page may change. */
+  updateProfile: (patch: {
+    displayName?: string;
+    timezone?: string;
+    locale?: string;
+  }): Promise<PublicUser> =>
+    http.patch<unknown>(API.auth.me, patch).then((raw) => {
+      const r = asRecord(unwrap(raw));
+      return toPublicUser(r.user ?? raw);
+    }),
+
+  changePassword: (input: { currentPassword: string; newPassword: string }): Promise<void> =>
+    http.post<unknown>(API.auth.changePassword, input).then(() => undefined),
 };
 
 // ---------------------------------------------------------------------------
@@ -910,4 +932,86 @@ function toBranchLinkRule(entry: unknown): BranchLinkRule {
     lastImportedAt: strOrNull(record['lastImportedAt']),
   };
 }
+
+/**
+ * Passkeys.
+ *
+ * The ceremony is two-legged: `begin*` returns WebAuthn options plus a
+ * `challengeId`, the browser asks its authenticator, and `finish*` posts the
+ * JSON-ified result back. The conversion itself lives in
+ * `@tracker/shared/src/passkeys.ts` because it is protocol, not presentation.
+ */
+export const passkeyApi = {
+  async list(signal?: AbortSignal): Promise<PasskeyListResponse> {
+    const raw = await http.get<unknown>(
+      API.webauthn.credentials,
+      signal !== undefined ? { signal } : undefined,
+    );
+    const record = asRecord(raw);
+    return {
+      credentials: asArray(record['credentials'], 'credentials').map((entry) => {
+        const item = asRecord(entry);
+        return {
+          id: num(item['id']),
+          label: str(item['label']),
+          attachment: str(item['attachment']) as PasskeyAttachment,
+          backedUp: bool(item['backedUp']),
+          lastUsedAt: strOrNull(item['lastUsedAt']),
+          createdAt: str(item['createdAt']),
+        };
+      }),
+      currentSessionId: strOrNull(record['currentSessionId']),
+    };
+  },
+
+  /** Ask the server for creation options and a challenge id. */
+  async beginRegistration(label: string): Promise<{ options: unknown; challengeId: number }> {
+    const raw = asRecord(
+      await http.post<unknown>(API.webauthn.registerBegin, { label }),
+    );
+    return { options: raw['options'], challengeId: num(raw['challengeId']) };
+  },
+
+  async finishRegistration(input: {
+    response: unknown;
+    challengeId: number;
+    label: string;
+  }): Promise<PasskeyRegistrationResponse> {
+    const raw = await http.post<unknown>(API.webauthn.registerFinish, input);
+    const parsed = passkeyRegistrationResponseSchema.safeParse(unwrap(raw));
+    if (!parsed.success) throw new Error('The server returned an unexpected passkey response');
+    return parsed.data as PasskeyRegistrationResponse;
+  },
+
+  /**
+   * Sign-in leg one. `username` is optional: with it, the platform prompt can
+   * skip account selection; without it, any passkey for this site is offered.
+   */
+  async beginAuthentication(username?: string): Promise<{ options: unknown; challengeId: number }> {
+    const raw = asRecord(
+      await http.post<unknown>(API.webauthn.authenticateBegin, { username: username ?? null }),
+    );
+    return { options: raw['options'], challengeId: num(raw['challengeId']) };
+  },
+
+  /** Sign-in leg two. Establishes a session exactly like a password login. */
+  async finishAuthentication(input: {
+    response: unknown;
+    challengeId: number;
+  }): Promise<PasskeyAuthenticationResponse> {
+    const raw = await http.post<unknown>(API.webauthn.authenticateFinish, input);
+    const parsed = passkeyAuthenticationResponseSchema.safeParse(unwrap(raw));
+    if (!parsed.success) throw new Error('The server returned an unexpected sign-in response');
+    return parsed.data as PasskeyAuthenticationResponse;
+  },
+
+  async revoke(credentialId: number): Promise<void> {
+    await http.delete<unknown>(fill(API.webauthn.revokeCredential, { id: credentialId }));
+  },
+
+  async revokeAll(): Promise<number> {
+    const raw = asRecord(await http.post<unknown>(API.webauthn.revokeAll, {}));
+    return num(raw['revoked']);
+  },
+};
 export type { SyncMode, WorkflowTransition, DependencyKind };

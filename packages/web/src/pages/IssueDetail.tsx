@@ -32,6 +32,7 @@ import { formatDate, formatDateTime, formatHours, formatRelative } from '../lib/
 import { useAuth } from '../auth/AuthContext';
 import { isPresenceStale, useRealtime, useRealtimeEvent } from '../realtime/useRealtime';
 import { AttachmentList } from '../components/AttachmentList';
+import { VideoRecorder } from '../components/VideoRecorder';
 import { Avatar } from '../components/Avatar';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -600,6 +601,24 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
               isLoading={attachmentsQuery.isLoading}
               onChanged={attachmentsQuery.refetch}
             />
+
+            {/* Video feedback: capture in the browser, review, then attach. */}
+            <details className="stack-xs">
+              <summary className="subtle">Record a video</summary>
+              <VideoRecorder
+                onRecorded={async (file) => {
+                  try {
+                    await issueApi.uploadAttachment(issueId as IssueId, file);
+                    toast.success('Recording attached');
+                    attachmentsQuery.refetch();
+                  } catch (error) {
+                    toast.apiError(error);
+                    throw error;
+                  }
+                }}
+                onError={(message) => toast.error(message)}
+              />
+            </details>
           </section>
         </aside>
       </div>

@@ -150,6 +150,12 @@ export const MUTABLE_MIME_TYPES = new Set([
   'application/zip',
   'text/x-log',
   'application/octet-stream',
+  // Video feedback recorded in the browser. This is a data allow-list, not a
+  // security control: the real controls are the size limit, the signature
+  // check and the download route's own disposition decision.
+  'video/webm',
+  'video/mp4',
+  'video/ogg',
 ]);
 
 /** Magic-byte prefixes; guards against a renamed executable being uploaded. */

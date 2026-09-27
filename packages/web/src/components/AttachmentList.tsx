@@ -60,23 +60,60 @@ export function AttachmentList({
         />
       ) : (
         <div className="link-list">
-          {attachments.map((attachment) => (
-            <div key={attachment.id} className="link-row">
-              <span className="row grow" style={{ gap: 8, minWidth: 0 }}>
-                <span aria-hidden="true">📄</span>
-                <a
-                  className="truncate"
-                  href={issueApi.attachmentUrl(attachment.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={attachment.filename}
-                >
-                  {attachment.filename}
-                </a>
-                <span className="subtle nowrap">
-                  {formatBytes(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt)}
-                </span>
-              </span>
+          {attachments.map((attachment) => {
+            // A video is played in place rather than offered as a download;
+            // everything else stays a link. The server serves video with
+            // `Content-Disposition: inline` and `nosniff`, so this cannot be
+            // used to render active content.
+            const isVideo = attachment.mimeType.startsWith('video/');
+            return (
+              <div key={attachment.id} className="link-row">
+                {isVideo ? (
+                  <div className="stack-xs" style={{ width: '100%' }}>
+                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                    <video
+                      className="attachment-video"
+                      src={issueApi.attachmentUrl(attachment.id)}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      aria-label={`Video: ${attachment.filename}`}
+                    />
+                    <span className="row grow" style={{ gap: 8, minWidth: 0 }}>
+                      <span aria-hidden="true">🎬</span>
+                      <a
+                        className="truncate"
+                        href={issueApi.attachmentUrl(attachment.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={attachment.filename}
+                      >
+                        {attachment.filename}
+                      </a>
+                      <span className="subtle nowrap">
+                        {formatBytes(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt)}
+                      </span>
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <span className="row grow" style={{ gap: 8, minWidth: 0 }}>
+                      <span aria-hidden="true">📄</span>
+                      <a
+                        className="truncate"
+                        href={issueApi.attachmentUrl(attachment.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={attachment.filename}
+                      >
+                        {attachment.filename}
+                      </a>
+                      <span className="subtle nowrap">
+                        {formatBytes(attachment.sizeBytes)} · {formatDateTime(attachment.createdAt)}
+                      </span>
+                    </span>
+                  </>
+                )}
               {canDelete ? (
                 <Button
                   size="sm"
@@ -96,7 +133,8 @@ export function AttachmentList({
                 </Button>
               ) : null}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
