@@ -185,8 +185,18 @@ export const semanticStrategy: SimilarityStrategy = {
       rightNorm += r * r;
     }
     if (leftNorm === 0 || rightNorm === 0) return { score: 0, sharedTokens: [] };
+
+    // Cosine similarity lives in [-1, 1], but a duplicate score must be in
+    // [0, 1]. Feature hashing puts signs in individual dimensions, so two
+    // unrelated titles can come out *negative* - which reads as "not a
+    // duplicate, and then some" to any caller comparing against a threshold or
+    // rendering it as a percentage. There is no evidence of duplication in a
+    // non-positive score, so it is floored at zero rather than rescaled:
+    // rescaling would give unrelated text a misleading 0.5.
+    const cosine = dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+
     return {
-      score: dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm)),
+      score: cosine > 0 ? cosine : 0,
       sharedTokens: topSharedTokens(normaliseTitle(a.title), normaliseTitle(b.title)),
     };
   },
