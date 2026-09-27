@@ -162,7 +162,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | RBAC | ✅ | Six roles → capability grants → one `can()` check |
 | Multi-project permissions | ✅ | Per-project membership with rank-safe role changes |
-| SSO / SAML | ⚠️ | OIDC is fully verified (JWKS signature, issuer, audience, nonce, expiry — see `services/oidc.ts`). **SAML assertions are parsed but not signature-verified.** |
+| SSO / SAML | ✅ | Both verified: OIDC against the provider JWKS (`services/oidc.ts`), SAML via XML-DSIG with wrapping-attack defence (`services/saml.ts`) |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
 | Biometric mobile app login | ❌ | Not implemented. See [Roadmap](#roadmap). |
@@ -486,12 +486,10 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 ### Known gaps
 
-- **SAML assertion signatures are not verified.** The OIDC path is: the ID token
-  is checked against the provider's published JWKS, with issuer, audience,
-  nonce and expiry enforced, and symmetric and `alg: none` tokens refused. The
-  SAML path parses the assertion and maps its claims but does not validate the
-  XML-DSIG signature, so do not enable SAML against an untrusted IdP yet. The
-  code says so at `parseSamlAssertion`.
+- **The bundled SAML client is a service provider, not an identity provider.**
+  It validates inbound assertions; it does not implement the full SAML
+  metadata/artifact-resolution ecosystem. OIDC is likewise confidential-client
+  only — no PKCE — so a public client must not use it yet.
 - The bundled SMTP client speaks only submission: it will not act as a
   receiving server, and it negotiates STARTTLS rather than exotic extensions.
   With no `SMTP_*` or `MAIL_WEBHOOK_URL` set, notifications stay in
@@ -508,7 +506,7 @@ Deliberately not built yet, in rough priority order:
 
 - **Video recording feedback** — browser capture, upload, inline playback
   attached to issues.
-- **Real SSO signature verification** and SAML metadata import.
+- SAML metadata import from an IdP, and signed AuthnRequest support.
 
 - **A real embedding model** behind the duplicate-detection interface.
 - **Postgres adapter** — the query layer is deliberately portable.

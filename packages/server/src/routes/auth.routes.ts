@@ -15,7 +15,13 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { badRequest, notFound, unauthenticated } from '../errors.ts';
 import type { RequestMeta } from '../services/auth.service.ts';
-import { createSsoState, readSsoState, safeRedirectPath } from '../services/auth.service.ts';
+import {
+  createSsoState,
+  newSamlRequestId,
+  newSsoNonce,
+  readSsoState,
+  safeRedirectPath,
+} from '../services/auth.service.ts';
 import {
   clearSessionCookie,
   guestServiceFor,
@@ -187,16 +193,21 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const sso = services.auth.findSsoConfigurationByName(params.provider);
     if (!sso) throw notFound('SSO provider', params.provider);
 
+    // The nonce binds the OIDC token to this browser session, and the request
+    // id binds the SAML assertion to the request we sent. Both live in the
+    // signed state, so neither can be chosen by the caller.
+    const requestId = sso.protocol === 'saml' ? newSamlRequestId() : '';
     const state = createSsoState(services.config.sessionSecret, {
       provider: sso.name,
       protocol: sso.protocol,
       redirect: safeRedirectPath(query.redirect),
-      nonce: '',
+      requestId,
+      nonce: newSsoNonce(),
     });
 
     const target =
       sso.protocol === 'saml'
-        ? services.auth.buildSamlRedirectUrl(sso, state)
+        ? services.auth.buildSamlRedirectUrl(sso, state, requestId)
         : services.auth.buildAuthorizationUrl(sso, state, services.auth.ssoRedirectUri(sso.name));
 
     return reply.redirect(target, 302);
@@ -226,7 +237,11 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       const claims =
         sso.protocol === 'saml'
-          ? services.auth.parseSamlAssertion(decodeSamlResponse(source['SAMLResponse']))
+          ? services.auth.parseSamlAssertion(sso, decodeSamlResponse(source['SAMLResponse']), {
+              // Binds the assertion to the request we sent, so a replayed
+              // response from another session is rejected.
+              inResponseTo: state.requestId,
+            })
           : await services.auth.exchangeOidcCode(
               sso,
               String(source['code'] ?? ''),

@@ -61,6 +61,7 @@ import {
   unauthenticated,
 } from '../errors.ts';
 import { JwksCache, verifyIdToken, type JwtClaims } from './oidc.ts';
+import { verifySamlResponse } from './saml.ts';
 import type { SqlParam } from '../db/connection.ts';
 import type { Services } from './context.ts';
 import type { RequestAuditContext } from './audit.service.ts';
@@ -277,6 +278,8 @@ const ANONYMOUS_ACTOR: Actor = {
 
 /** SSO `state` parameter: provider round trip plus a post-login target. */
 export interface SsoStatePayload {
+  /** SAML `AuthnRequest/@ID`; echoed back as `InResponseTo` for replay defence. */
+  requestId: string;
   provider: string;
   protocol: 'oidc' | 'saml';
   /** Same-origin path to land on after the callback; never an absolute URL. */
@@ -291,6 +294,16 @@ const SSO_STATE_TTL_MS = 10 * 60 * 1000;
  * Build a tamper-evident, stateless OAuth `state`. There is no state table in
  * the schema, so the payload is HMAC-signed with the instance session secret.
  */
+/** A fresh OIDC nonce, bound to this browser session via the signed state. */
+export function newSsoNonce(): string {
+  return generateToken(16);
+}
+
+/** A fresh SAML AuthnRequest ID, recorded in the signed state for replay defence. */
+export function newSamlRequestId(): string {
+  return `_${generateToken(16)}`;
+}
+
 export function createSsoState(secret: Buffer, payload: Omit<SsoStatePayload, 'issuedAt'>): string {
   const body: SsoStatePayload = { ...payload, issuedAt: Date.now() };
   const encoded = Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
@@ -320,6 +333,9 @@ export function readSsoState(secret: Buffer, state: string): SsoStatePayload | n
       protocol: payload.protocol === 'saml' ? 'saml' : 'oidc',
       redirect: typeof payload.redirect === 'string' ? payload.redirect : '/',
       nonce: typeof payload.nonce === 'string' ? payload.nonce : '',
+      // States issued before this field existed decode to an empty request id,
+      // which the SAML path treats as "unsolicited" rather than trusted.
+      requestId: typeof payload.requestId === 'string' ? payload.requestId : '',
       issuedAt: payload.issuedAt,
     };
   } catch {
@@ -979,10 +995,14 @@ export class AuthService {
   }
 
   /** Build an unsigned, deflated SAML 2.0 AuthnRequest (HTTP-Redirect binding). */
-  buildSamlRedirectUrl(sso: SsoConfiguration, relayState: string): string {
+  buildSamlRedirectUrl(
+    sso: SsoConfiguration,
+    relayState: string,
+    /** Supplied by the caller so it can be recorded in the signed state. */
+    requestId = newSamlRequestId(),
+  ): string {
     if (!sso.ssoUrl) throw badRequest(`SSO provider "${sso.name}" has no SSO URL configured`);
 
-    const requestId = `_${generateToken(16)}`;
     const issueInstant = nowIso();
     const destination = escapeXml(sso.ssoUrl);
     const acs = escapeXml(this.ssoRedirectUri(sso.name));
@@ -991,7 +1011,7 @@ export class AuthService {
     const xml =
       `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` +
       `xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ` +
-      `ID="${requestId}" Version="2.0" IssueInstant="${issueInstant}" ` +
+      `ID="${escapeXml(requestId)}" Version="2.0" IssueInstant="${issueInstant}" ` +
       `Destination="${destination}" AssertionConsumerServiceURL="${acs}" ` +
       `ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">` +
       `<saml:Issuer>${issuer}</saml:Issuer></samlp:AuthnRequest>`;
@@ -1037,34 +1057,38 @@ export class AuthService {
    * over the signed element, issuer/audience checks and replay protection) MUST
    * be added before an external IdP is trusted. See `consumeSsoCallback`.
    */
-  parseSamlAssertion(xml: string): Record<string, unknown> {
-    const claims: Record<string, unknown> = {};
-
-    const nameId = /<(?:\w+:)?NameID[^>]*>([^<]+)<\/(?:\w+:)?NameID>/i.exec(xml);
-    if (nameId?.[1]) claims['nameid'] = decodeXmlEntities(nameId[1].trim());
-
-    const notOnOrAfter = /<(?:\w+:)?Conditions[^>]*\bNotOnOrAfter="([^"]+)"/i.exec(xml);
-    if (notOnOrAfter?.[1]) claims['notOnOrAfter'] = notOnOrAfter[1];
-
-    const inResponseTo = /<(?:\w+:)?Response[^>]*\bInResponseTo="([^"]+)"/i.exec(xml);
-    if (inResponseTo?.[1]) claims['inResponseTo'] = inResponseTo[1];
-
-    const attributePattern =
-      /<(?:\w+:)?Attribute\b[^>]*\bName="([^"]+)"[^>]*>([\s\S]*?)<\/(?:\w+:)?Attribute>/gi;
-    let match: RegExpExecArray | null = attributePattern.exec(xml);
-    while (match !== null) {
-      const key = match[1];
-      const body = match[2] ?? '';
-      if (key) {
-        const valueMatch = /<(?:\w+:)?AttributeValue[^>]*>([\s\S]*?)<\/(?:\w+:)?AttributeValue>/i.exec(body);
-        const value = valueMatch?.[1] === undefined ? body : valueMatch[1];
-        const clean = decodeXmlEntities(value.replace(/<[^>]*>/g, '').trim());
-        if (clean) claims[key] = clean;
-        claims[key.toLowerCase()] = clean;
-      }
-      match = attributePattern.exec(xml);
+  parseSamlAssertion(
+    sso: SsoConfiguration,
+    xml: string,
+    options: { inResponseTo?: string | null; allowUnsolicited?: boolean } = {},
+  ): Record<string, unknown> {
+    const certificate = this.readIdpCertificate(sso);
+    if (!certificate) {
+      throw integrationError(
+        'This SAML provider has no IdP certificate configured, so its assertions cannot be verified',
+      );
     }
 
+    const verified = verifySamlResponse({
+      xml,
+      idpCertificate: certificate,
+      expectedAudience: this.ssoEntityId(),
+      expectedInResponseTo: options.inResponseTo ?? null,
+      allowUnsolicited: options.allowUnsolicited ?? false,
+    });
+
+    // Claims are flattened so `mapSsoClaims` can consume them the same way it
+    // consumes OIDC claims.
+    const claims: Record<string, unknown> = {
+      nameid: verified.nameId,
+      inResponseTo: verified.inResponseTo,
+    };
+    if (verified.notOnOrAfter) claims['notOnOrAfter'] = verified.notOnOrAfter.toISOString();
+    if (verified.issuer) claims['issuer'] = verified.issuer;
+    for (const [key, value] of Object.entries(verified.attributes)) {
+      claims[key] = value;
+      claims[key.toLowerCase()] = value;
+    }
     return claims;
   }
 
@@ -1572,6 +1596,29 @@ export class AuthService {
     } catch (error) {
       throw integrationError(`The stored client secret for "${sso.name}" could not be decrypted`);
     }
+  }
+
+  /**
+   * The IdP's signing certificate, PEM or bare base64, as stored.
+   *
+   * Required for SAML: without it the assertion cannot be verified, and an
+   * unverifiable assertion is refused rather than trusted.
+   */
+  private readIdpCertificate(sso?: SsoConfiguration): string | null {
+    const configured = sso?.idpCertificate ?? null;
+    return configured && configured.trim().length > 0 ? configured : null;
+  }
+
+  /**
+   * This service provider's entity ID, used to check `AudienceRestriction`.
+   *
+   * The IdP compares the audience against whatever entity ID was advertised in
+   * our AuthnRequest, which is the callback URL we expose.
+   */
+  private ssoEntityId(): string {
+    const configured = process.env['SAML_ENTITY_ID'];
+    if (configured && configured.length > 0) return configured;
+    return this.ssoRedirectUri('default').replace(/\/default\/callback$/, '/callback');
   }
 
   /** Strip the password hash before anything leaves the service. */
