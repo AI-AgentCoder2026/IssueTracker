@@ -231,6 +231,9 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
               sso,
               String(source['code'] ?? ''),
               services.auth.ssoRedirectUri(sso.name),
+              // Bound into the signed `state` when the flow started, so a token
+              // replayed from another session is rejected.
+              state.nonce,
             );
 
       if (!claims || Object.keys(claims).length === 0) {

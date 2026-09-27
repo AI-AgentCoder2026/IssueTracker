@@ -162,7 +162,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | RBAC | ✅ | Six roles → capability grants → one `can()` check |
 | Multi-project permissions | ✅ | Per-project membership with rank-safe role changes |
-| SSO / SAML | ⚠️ | OIDC authorization-code and SAML ACS endpoints are implemented. **IdP signature verification is not** — see the note in `auth.service.ts` before trusting it. |
+| SSO / SAML | ⚠️ | OIDC is fully verified (JWKS signature, issuer, audience, nonce, expiry — see `services/oidc.ts`). **SAML assertions are parsed but not signature-verified.** |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
 | Biometric mobile app login | ❌ | Not implemented. See [Roadmap](#roadmap). |
@@ -486,10 +486,12 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 ### Known gaps
 
-- **SSO/SAML signature verification is not implemented.** The OIDC and SAML
-  endpoints parse and map what the IdP sends, but do not verify the IdP
-  signature. Do not enable federated login against an untrusted IdP until that
-  is added; the code marks this in a comment at the call site.
+- **SAML assertion signatures are not verified.** The OIDC path is: the ID token
+  is checked against the provider's published JWKS, with issuer, audience,
+  nonce and expiry enforced, and symmetric and `alg: none` tokens refused. The
+  SAML path parses the assertion and maps its claims but does not validate the
+  XML-DSIG signature, so do not enable SAML against an untrusted IdP yet. The
+  code says so at `parseSamlAssertion`.
 - The bundled SMTP client speaks only submission: it will not act as a
   receiving server, and it negotiates STARTTLS rather than exotic extensions.
   With no `SMTP_*` or `MAIL_WEBHOOK_URL` set, notifications stay in

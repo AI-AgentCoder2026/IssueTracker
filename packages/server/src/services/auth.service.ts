@@ -50,7 +50,17 @@ import {
   verifyPassword,
 } from '../lib/crypto.ts';
 import { addMs, isPast, nowIso } from '../lib/time.ts';
-import { badRequest, conflict, forbidden, integrationError, internalError, notFound, unauthenticated } from '../errors.ts';
+import {
+  AppError,
+  badRequest,
+  conflict,
+  forbidden,
+  integrationError,
+  internalError,
+  notFound,
+  unauthenticated,
+} from '../errors.ts';
+import { JwksCache, verifyIdToken, type JwtClaims } from './oidc.ts';
 import type { SqlParam } from '../db/connection.ts';
 import type { Services } from './context.ts';
 import type { RequestAuditContext } from './audit.service.ts';
@@ -329,6 +339,9 @@ export function safeRedirectPath(value: unknown): string {
 }
 
 export class AuthService {
+  /** Short-lived cache of each provider's published signing keys. */
+  private readonly jwksCache = new JwksCache();
+
   private readonly services: Services;
   /**
    * A throw-away hash used to keep the "unknown user" branch of `login` as slow
@@ -1203,6 +1216,8 @@ export class AuthService {
     sso: SsoConfiguration,
     code: string,
     redirectUri: string,
+    /** Nonce issued in the signed `state`; bound to this browser session. */
+    nonce?: string | null,
   ): Promise<Record<string, unknown>> {
     if (!sso.tokenEndpoint) {
       throw badRequest(`SSO provider "${sso.name}" has no token endpoint configured`);
@@ -1238,32 +1253,83 @@ export class AuthService {
       });
     }
 
-    const accessToken = typeof payload['access_token'] === 'string' ? payload['access_token'] : null;
-    if (sso.userinfoEndpoint && accessToken) {
-      try {
-        const response = await fetch(sso.userinfoEndpoint, {
-          headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
-        });
-        if (!response.ok) {
-          throw integrationError(`Userinfo endpoint responded with ${response.status}`, {
+    const accessToken =
+      typeof payload['access_token'] === 'string' ? payload['access_token'] : null;
+
+    // The `id_token` is verified before any claim is read. If it checks out we
+    // still prefer userinfo, because the endpoint is authoritative and returns
+    // a fresh, normalised view of the subject.
+    if (typeof payload['id_token'] === 'string') {
+      const claims = await this.verifyOidcIdToken(sso, payload['id_token'], nonce);
+
+      if (sso.userinfoEndpoint && accessToken) {
+        try {
+          const response = await fetch(sso.userinfoEndpoint, {
+            headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+          });
+          if (!response.ok) {
+            throw integrationError(`Userinfo endpoint responded with ${response.status}`, {
+              provider: sso.name,
+              status: response.status,
+            });
+          }
+          return (await response.json()) as Record<string, unknown>;
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AppError') throw error;
+          throw integrationError(`Could not reach the userinfo endpoint for "${sso.name}"`, {
             provider: sso.name,
-            status: response.status,
           });
         }
-        return (await response.json()) as Record<string, unknown>;
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AppError') throw error;
-        throw integrationError(`Could not reach the userinfo endpoint for "${sso.name}"`, {
-          provider: sso.name,
-        });
       }
-    }
 
-    if (typeof payload['id_token'] === 'string') {
-      return decodeJwtPayload(payload['id_token']);
+      return claims as Record<string, unknown>;
     }
 
     throw integrationError(`SSO provider "${sso.name}" returned no usable identity claims`);
+  }
+
+  /**
+   * Verify an OIDC ID token's signature and claims against the provider's JWKS.
+   *
+   * A token that cannot be verified is a hard failure: silently falling back to
+   * the unverified claims is the vulnerability this closes.
+   */
+  async verifyOidcIdToken(
+    sso: SsoConfiguration,
+    idToken: string,
+    nonce?: string | null,
+  ): Promise<JwtClaims> {
+    if (!sso.jwksUri) {
+      throw integrationError(
+        `SSO provider "${sso.name}" has no JWKS URI configured, so its ID tokens cannot be verified`,
+      );
+    }
+    if (!sso.issuer) {
+      throw integrationError(
+        `SSO provider "${sso.name}" has no issuer configured, so the token's issuer cannot be checked`,
+      );
+    }
+    if (!sso.clientId) {
+      throw integrationError(
+        `SSO provider "${sso.name}" has no client id, so the token's audience cannot be checked`,
+      );
+    }
+
+    const jwks = await this.jwksCache.get(sso.jwksUri);
+    try {
+      return verifyIdToken(idToken, jwks, {
+        issuer: sso.issuer,
+        audience: sso.clientId,
+        nonce: nonce ?? null,
+      });
+    } catch (error) {
+      // A key-id mismatch is the common symptom of a rotation. Drop the cache
+      // so the retry sees the new set rather than repeating the failure.
+      if (error instanceof AppError && /key id/i.test(error.message)) {
+        this.jwksCache.invalidate(sso.jwksUri);
+      }
+      throw error;
+    }
   }
 
   /** Link a federated identity to a local user, creating the row if needed. */
