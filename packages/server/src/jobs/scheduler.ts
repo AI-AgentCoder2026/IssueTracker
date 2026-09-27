@@ -21,7 +21,7 @@ export interface SchedulerOptions {
   intervals?: Partial<Record<JobName, number>>;
 }
 
-export type JobName = 'sla' | 'archive' | 'gitlab' | 'webhooks' | 'email';
+export type JobName = 'sla' | 'archive' | 'gitlab' | 'webhooks' | 'email' | 'webauthn';
 
 const DEFAULT_INTERVALS: Record<JobName, number> = {
   sla: 60_000,
@@ -29,6 +29,7 @@ const DEFAULT_INTERVALS: Record<JobName, number> = {
   gitlab: 300_000,
   webhooks: 30_000,
   email: 30_000,
+  webauthn: 300_000,
 };
 
 export class Scheduler {

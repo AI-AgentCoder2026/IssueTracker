@@ -21,6 +21,7 @@ import type { ActivityService } from './activity.service.ts';
 import type { AuditService, RequestAuditContext } from './audit.service.ts';
 import type { NotificationService } from './notification.service.ts';
 import type { MailService } from './mail.service.ts';
+import type { WebAuthnService } from './webauthn.service.ts';
 
 export type { RequestAuditContext };
 import type { AuthService } from './auth.service.ts';
@@ -56,6 +57,7 @@ export interface Services {
   activity: ActivityService;
   notifications: NotificationService;
   mail: MailService;
+  webauthn: WebAuthnService;
   realtime: RealtimeHub;
 
   // Identity

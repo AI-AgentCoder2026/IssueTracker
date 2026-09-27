@@ -184,6 +184,17 @@ export const API = {
     breached: '/api/sla/breached',
   },
 
+  // -- webauthn / passkeys -------------------------------------------------
+  webauthn: {
+    registerBegin: '/api/webauthn/register/begin',
+    registerFinish: '/api/webauthn/register/finish',
+    authenticateBegin: '/api/webauthn/authenticate/begin',
+    authenticateFinish: '/api/webauthn/authenticate/finish',
+    credentials: '/api/webauthn/credentials',
+    revokeCredential: '/api/webauthn/credentials/:id',
+    revokeAll: '/api/webauthn/credentials/revoke-all',
+  },
+
   // -- notifications -------------------------------------------------------
   notifications: {
     list: '/api/notifications',

@@ -49,6 +49,7 @@ import { gitlabRoutes, gitlabWebhookRoutes, webhookRoutes } from './routes/gitla
 import { dashboardRoutes } from './routes/dashboards.routes.ts';
 import { slaRoutes } from './routes/sla.routes.ts';
 import { versionControlRoutes } from './routes/versioncontrol.routes.ts';
+import { webauthnRoutes } from './routes/webauthn.routes.ts';
 
 export interface BuildAppOptions {
   config?: Partial<Config>;
@@ -204,6 +205,9 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<TrackerAp
   // way, but keeping them early documents the intent.
   await app.register(gitlabWebhookRoutes);
 
+  // Passkey sign-in must be reachable without a session, so it is registered
+  // alongside the other public auth routes.
+  await app.register(webauthnRoutes);
   await app.register(authRoutes);
   await app.register(userRoutes);
   await app.register(notificationRoutes);

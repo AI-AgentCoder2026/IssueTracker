@@ -16,6 +16,7 @@ import { ActivityService } from './activity.service.ts';
 import { AuditService } from './audit.service.ts';
 import { NotificationService } from './notification.service.ts';
 import { MailService } from './mail.service.ts';
+import { WebAuthnService } from './webauthn.service.ts';
 import { AuthService } from './auth.service.ts';
 import { ProjectService } from './project.service.ts';
 import { WorkflowService } from './workflow.service.ts';
@@ -78,6 +79,7 @@ export function createServices(options: RegistryOptions): Services {
   services.sla = new SlaService(services);
   services.dashboards = new DashboardService(services);
   services.versionControl = new VersionControlService(services);
+  services.webauthn = new WebAuthnService(services);
   services.gitlab = new GitLabService(services);
   services.webhooks = new WebhookService(services);
 
