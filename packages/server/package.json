@@ -9,7 +9,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "dev": "node --watch --experimental-strip-types --disable-warning=ExperimentalWarning src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/db/copy-assets.js",
     "start": "node dist/index.js",
     "migrate": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/db/cli.ts up",
     "seed": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/db/seed.ts",
