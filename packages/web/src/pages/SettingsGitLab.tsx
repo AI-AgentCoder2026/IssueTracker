@@ -1,17 +1,24 @@
 /**
  * GitLab connection panel.
  *
- * The source-of-truth selector is a radio group bound to the three `SyncMode`
- * values, labelled and described from `SYNC_MODE_LABEL` / `SYNC_MODE_DESCRIPTION`
- * so the wording matches the server exactly. The access token is write-only:
- * only `hasToken` and `tokenHint` are ever read back.
+ * Two different settings are called "source of truth" here, and conflating them
+ * is the whole reason the second one used to have no control at all:
+ *
+ *   * `syncMode` is per-connection and decides who wins a conflict -- the
+ *     radio group below.
+ *   * `sourceOfTruth` is a *project* field deciding where the canonical record
+ *     lives: `local` keeps the tracker authoritative and mirrors to GitLab,
+ *     `gitlab` makes GitLab the store and the tracker a mirror. This is the
+ *     setting behind "use GitLab to store", so it gets its own control.
+ *
+ * The access token is write-only: only `hasToken` and `tokenHint` are read back.
  */
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '../api/hooks';
 import { ApiError } from '../api/client';
-import { gitlabApi } from '../api/repo';
+import { gitlabApi, projectApi } from '../api/repo';
 import {
   SYNC_MODES,
   SYNC_MODE_DESCRIPTION,
@@ -31,6 +38,22 @@ import { SkeletonRows } from '../components/Skeleton';
 import { DataTable, type Column } from '../components/Table';
 import { useToast } from '../components/Toast';
 import { formatDateTime, formatRelative } from '../lib/format';
+
+/** Where the canonical record for this project lives. */
+const SOURCE_OF_TRUTH: Array<{ value: 'local' | 'gitlab'; label: string; description: string }> = [
+  {
+    value: 'local',
+    label: 'This tracker is the store',
+    description:
+      'Issues are authoritative here and are mirrored to GitLab. Use this when GitLab is a reporting surface.',
+  },
+  {
+    value: 'gitlab',
+    label: 'GitLab is the store',
+    description:
+      'The GitLab project is authoritative and this tracker mirrors it. Use this when the team works in GitLab.',
+  },
+];
 
 interface FormState {
   baseUrl: string;
@@ -72,6 +95,31 @@ export function SettingsGitLab(): JSX.Element {
   const { confirm, dialog } = useConfirm();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // The project-level source of truth, which is separate from the connection's
+  // sync mode. It is a project field, so it is read and written through the
+  // project route rather than the GitLab connection route.
+  const projectQuery = useQuery((signal) => projectApi.get(projectId, signal), [projectId]);
+  const [sourceOfTruth, setSourceOfTruth] = useState<'local' | 'gitlab'>('local');
+
+  useEffect(() => {
+    if (projectQuery.data !== null) setSourceOfTruth(projectQuery.data.sourceOfTruth);
+  }, [projectQuery.data]);
+
+  const saveSourceOfTruth = useMutation<'local' | 'gitlab', void>(
+    (value) => projectApi.update(projectId, { sourceOfTruth: value }).then(() => undefined),
+    {
+      onSuccess: () => {
+        projectQuery.refetch();
+        toast.success(
+          sourceOfTruth === 'gitlab'
+            ? 'GitLab is now the store for this project'
+            : 'This tracker is now the store for this project',
+        );
+      },
+      onError: (error) => toast.apiError(error),
+    },
+  );
 
   const connectionQuery = useQuery<GitLabConnectionPublic | null>(
     (signal) => gitlabApi.connection(projectId, signal),
@@ -301,8 +349,36 @@ export function SettingsGitLab(): JSX.Element {
         ) : null}
 
         <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="field-label">Source of truth</legend>
-          <div className="stack-sm" role="radiogroup" aria-label="Source of truth">
+          <legend className="field-label">Where this project is stored</legend>
+          <div className="stack-sm" role="radiogroup" aria-label="Where this project is stored">
+            {SOURCE_OF_TRUTH.map((option) => (
+              <label key={option.value} className="radio-card">
+                <input
+                  type="radio"
+                  name="source-of-truth"
+                  value={option.value}
+                  checked={sourceOfTruth === option.value}
+                  disabled={projectQuery.isLoading || saveSourceOfTruth.isPending}
+                  onChange={() => saveSourceOfTruth.mutate(option.value)}
+                />
+                <span>
+                  <span style={{ fontWeight: 600 }}>{option.label}</span>
+                  <span className="subtle" style={{ display: 'block' }}>
+                    {option.description}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <p className="subtle">
+            This is the project setting. The sync mode below is per connection and decides who
+            wins when both sides changed the same issue.
+          </p>
+        </fieldset>
+
+        <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend className="field-label">Sync mode</legend>
+          <div className="stack-sm" role="radiogroup" aria-label="Sync mode">
             {SYNC_MODES.map((mode) => (
               <label key={mode} className="radio-card">
                 <input

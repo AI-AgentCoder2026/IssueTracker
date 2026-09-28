@@ -198,8 +198,17 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 ## GitLab integration
 
 The product decision this was built around: **you choose which side is the source
-of truth.** A connection declares a `SyncMode`, and all three modes run through
-one adapter — only the conflict-resolution rule differs.
+of truth.** There are two distinct settings, and they are not the same thing:
+
+- **Where this project is stored** (`project.sourceOfTruth`) — `local` makes
+  this tracker canonical and mirrors to GitLab; `gitlab` makes the GitLab
+  project canonical and mirrors into the tracker. This is the setting behind
+  "use GitLab to store", and it is set from the GitLab settings screen.
+- **Sync mode** (per connection) — the three `SyncMode` values below, which
+  decide who wins when both sides changed the same issue.
+
+All three sync modes run through one adapter — only the conflict-resolution
+rule differs.
 
 | Mode | Behaviour |
 | --- | --- |
@@ -590,8 +599,8 @@ Deliberately not built yet, in rough priority order:
   there is no transcription or playback-speed control.
 - **A real embedding model** behind the duplicate-detection interface.
 - **Postgres adapter** — the query layer is deliberately portable.
-- **Instance settings and per-user dashboard layouts**, saved searches, and an
-  admin user list.
+- **Instance settings and per-user dashboard layouts**, plus saved searches.
+  (User administration *is* built — see the Access and security table.)
 - **Single sign-on**, if it is ever wanted again — it would need configuration
   CRUD to exist at all, not just verification.
 

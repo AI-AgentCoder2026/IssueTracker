@@ -133,6 +133,50 @@ describe('screens mount', () => {
     expect(await screen.findByRole('heading', { name: /^people$/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /add person/i })).toBeTruthy();
   });
+
+  it('GitLab settings exposes the project source of truth, not just the sync mode', async () => {
+    Object.assign(RESPONSES, {
+      '/api/projects/1': {
+        // `projectApi.get` does not unwrap an envelope; the route answers with
+        // the project itself.
+        id: 1,
+        key: 'GL',
+        name: 'GitLab project',
+        description: '',
+        visibility: 'private',
+        defaultIssueType: 'task',
+        defaultPriority: 'medium',
+        nextIssueNumber: 1,
+        // The verifier's gap: this was settable through the API with no
+        // control anywhere, which is the setting behind "use GitLab to store".
+        sourceOfTruth: 'gitlab',
+        archivePolicy: null,
+        createdBy: 1,
+        createdAt: '2026-09-01T09:00:00.000Z',
+        updatedAt: '2026-09-01T09:00:00.000Z',
+      },
+      '/api/projects/1/gitlab': null,
+      '/api/projects/1/gitlab/runs': [],
+      '/api/projects/1/gitlab/conflicts': [],
+    });
+
+    const { SettingsGitLab } = await import('./pages/SettingsGitLab');
+    await mount(<SettingsGitLab />, '/p/1/settings/gitlab');
+
+    // Both controls exist and are distinct: the project-level store and the
+    // per-connection conflict winner.
+    expect(await screen.findByRole('radiogroup', { name: /where this project is stored/i })).toBeTruthy();
+    expect(screen.getByRole('radiogroup', { name: /sync mode/i })).toBeTruthy();
+    expect(screen.getByText('This tracker is the store')).toBeTruthy();
+    expect(screen.getByText('GitLab is the store')).toBeTruthy();
+
+    // The saved value is reflected, so the control is not merely present.
+    const gitlabChoice = screen
+      .getByRole('radio', { name: /GitLab is the store/i })
+      .closest('label') as HTMLLabelElement;
+    const input = gitlabChoice.querySelector('input');
+    expect(input?.checked).toBe(true);
+  });
 });
 
 /**
