@@ -57,12 +57,30 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Keys that mark an object as a domain row rather than a response envelope.
+ *
+ * `unwrap` is for envelopes, but a domain object is free to have a `data`
+ * field of its own -- `RenderedWidget` does -- and handing that to a
+ * normaliser that unwraps silently replaces the object with its payload, so
+ * every field then falls back to a default. The one place that happens is
+ * guarded explicitly, in `toWidget`.
+ *
+ * If a new domain type gains a `data` or `result` field, that guard needs
+ * extending too.
+ */
+const ENVELOPE_KEYS = new Set(['data', 'result', 'meta', 'error', 'success', 'requestId']);
+
 /** Peels a `{ data: ... }` / `{ result: ... }` envelope when one is present. */
 export function unwrap(value: unknown): unknown {
   if (!isRecord(value)) return value;
   for (const key of ['data', 'result'] as const) {
     const inner = value[key];
-    if (inner !== undefined && inner !== null) return inner;
+    if (inner === undefined || inner === null) continue;
+    // Only peel when the keys present are envelope-shaped. A row that also
+    // carries `id` or `type` is the payload, not a wrapper around it.
+    const isEnvelope = Object.keys(value).every((k) => ENVELOPE_KEYS.has(k));
+    return isEnvelope ? inner : value;
   }
   return value;
 }
@@ -497,14 +515,7 @@ function toWidgetPosition(value: unknown): WidgetPosition {
 }
 
 export function toWidget(value: unknown): DashboardWidget {
-  // Not `unwrap`. A *rendered* widget carries a `data` key of its own, and
-  // unwrapping one hands back that payload instead of the widget -- blanking
-  // its id, type, title, filters and limit, so every widget on every rendered
-  // dashboard arrived as a default "Issue list" with no data.
-  //
-  // A widget is identified by having a `type`; a bare `{ data }` envelope
-  // never does. So only unwrap when there is no widget in sight.
-  const w = asRecord(isRecord(value) && 'type' in value ? value : unwrap(value));
+  const w = asRecord(unwrap(value));
   return {
     id: num(w.id),
     dashboardId: num(w.dashboardId) as Dashboard['id'],
@@ -518,7 +529,7 @@ export function toWidget(value: unknown): DashboardWidget {
 }
 
 export function toRenderedWidget(value: unknown): RenderedWidget {
-  const w = asRecord(isRecord(value) && 'type' in value ? value : unwrap(value));
+  const w = asRecord(unwrap(value));
   return { ...toWidget(w), data: toWidgetData(w.data) };
 }
 

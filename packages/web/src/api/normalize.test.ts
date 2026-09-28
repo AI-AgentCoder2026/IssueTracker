@@ -51,6 +51,21 @@ describe('primitives', () => {
     expect(unwrap(null)).toBeNull();
   });
 
+  it('peels an envelope that also carries meta or a request id', () => {
+    expect(unwrap({ data: [1], meta: { totalCount: 1 } })).toEqual([1]);
+    expect(unwrap({ result: { ok: true }, requestId: 'abc' })).toEqual({ ok: true });
+  });
+
+  it('refuses to peel a domain row that has a data field of its own', () => {
+    // The systemic guard. `RenderedWidget` is `{ ...widget, data }`, so
+    // peeling it handed the normaliser the payload instead of the widget and
+    // every field fell back to a default. A row is recognised by carrying
+    // identity keys alongside the envelope-shaped ones.
+    const row = { id: 42, type: 'sla_countdown', data: { kind: 'list' } };
+    expect(unwrap(row)).toBe(row);
+    expect(unwrap({ id: 1, result: { x: 1 } })).toEqual({ id: 1, result: { x: 1 } });
+  });
+
   it('coerces scalars without inventing values', () => {
     expect(str('x')).toBe('x');
     expect(str(5, 'fallback')).toBe('fallback');
