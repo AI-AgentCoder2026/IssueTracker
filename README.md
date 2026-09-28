@@ -481,6 +481,7 @@ packages/server/test/
 ├── search.test.ts         FTS queries, filters, export
 ├── dedupe.test.ts         duplicate scoring and dismissal
 ├── sla.test.ts            clock settlement, breach, at-risk windows
+├── timing.test.ts         durations, overdue baseline, sub-task rollup
 ├── dashboards.test.ts     role-scoped widgets and rendering
 ├── collaboration.test.ts  comments, mentions, attachments, search filters
 ├── attachment.test.ts     upload limits, traversal, content sniffing

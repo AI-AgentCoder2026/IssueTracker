@@ -226,11 +226,16 @@ function buildTiming(entry: IssueTimingEntry, now: number): IssueTiming {
   const closedAt = row.closed_at === null ? null : Date.parse(row.closed_at);
 
   // In-progress time runs to whichever stop happened last, or to now.
-  const progressEnd = closedAt ?? resolvedAt ?? now;
+  // Resolution ends the work; closing afterwards is administrative, so the
+  // earlier of the two is the honest end point.
+  const progressEnd = resolvedAt ?? closedAt ?? now;
   const inProgress = startedAt === null ? null : Math.max(0, progressEnd - startedAt);
 
   const due = row.due_date === null ? null : Date.parse(row.due_date);
-  const atRiskUntil = closedAt ?? resolvedAt ?? now;
+  // Documented convention: overdue is measured to resolution, then to closure.
+  // An issue resolved on time and closed weeks later was delivered on time, and
+  // must not accrue lateness for the administrative delay.
+  const atRiskUntil = resolvedAt ?? closedAt ?? now;
 
   return {
     createdAt: row.created_at,
