@@ -114,8 +114,16 @@ export {
   roleAtLeast,
 } from '@tracker/shared';
 
-/** The signed-in user as the API returns it: `User` without `passwordHash`. */
-export type PublicUser = Omit<User, 'passwordHash'>;
+/**
+ * The signed-in user as the API returns it: `User` without `passwordHash`.
+ *
+ * `instanceRole` is not on the shared `User`, but the server's
+ * `withoutPassword` helper is typed against `User` while receiving a
+ * `StoredUser`, so the field arrives in every response. Without it declared
+ * here the normaliser silently dropped it and any screen showing who is an
+ * instance admin rendered the default for everyone.
+ */
+export type PublicUser = Omit<User, 'passwordHash'> & { instanceRole?: string };
 
 /** A project member joined with the user record, as the members page needs it. */
 export interface MemberView extends Membership {

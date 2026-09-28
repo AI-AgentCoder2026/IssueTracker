@@ -29,14 +29,6 @@ import { formatDate, formatRelative } from '../lib/format';
 
 const INSTANCE_ROLES = ['user', 'staff', 'admin'] as const;
 
-/**
- * The server's `withoutPassword` helper is typed against `User` but receives a
- * `StoredUser`, so `instanceRole` is present in every response at runtime and
- * simply missing from the type. Widening here rather than changing the shared
- * `PublicUser`, which @mentions and avatars also use and do not need it.
- */
-type AdminUser = PublicUser & { instanceRole?: string };
-
 const NEW_USER = {
   username: '',
   email: '',
@@ -52,12 +44,12 @@ export function AdminUsers(): JSX.Element {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [draft, setDraft] = useState({ ...NEW_USER });
 
-  const usersQuery = useQuery<AdminUser[]>(
+  const usersQuery = useQuery<PublicUser[]>(
     (signal) => userApi.list({ search, includeInactive, limit: 200, signal }),
     [search, includeInactive],
   );
 
-  const create = useMutation<typeof NEW_USER, AdminUser>(
+  const create = useMutation<typeof NEW_USER, PublicUser>(
     (input) => userApi.createUser(input),
     {
       onSuccess: (user) => {
@@ -80,7 +72,7 @@ export function AdminUsers(): JSX.Element {
     draft.displayName.trim() !== '' &&
     draft.password.length >= 12;
 
-  const columns: Column<AdminUser>[] = [
+  const columns: Column<PublicUser>[] = [
     {
       key: 'name',
       header: 'Name',

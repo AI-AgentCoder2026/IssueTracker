@@ -508,7 +508,8 @@ packages/server/test/
 
 packages/web/src/
 ├── lib/format.test.ts     duration, date, size and table-cell rendering
-└── api/normalize.test.ts  defensive payload parsing, widget rendering
+├── api/normalize.test.ts  defensive payload parsing, widget rendering
+└── screens.test.tsx       every screen mounts and renders real payloads
 ```
 
 Every server test gets its own in-memory database, so suites are isolated and

@@ -146,6 +146,11 @@ export function toPublicUser(value: unknown): PublicUser {
     provider: enumValue(row.provider, AUTH_PROVIDERS, 'local'),
     isInstanceAdmin: bool(row.isInstanceAdmin),
     isActive: bool(row.isActive, true),
+    // Present on the instance user routes; absent for the signed-in user and
+    // for a mention suggestion, so it stays optional.
+    ...(strOrNull(row.instanceRole) === null
+      ? {}
+      : { instanceRole: strOrNull(row.instanceRole) as string }),
     timezone: str(row.timezone, 'UTC'),
     locale: str(row.locale, 'en'),
     lastLoginAt: strOrNull(row.lastLoginAt),
