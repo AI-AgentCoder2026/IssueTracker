@@ -122,18 +122,30 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 
 ## Requirements coverage
 
+> **What ✅ means here.** A row is ✅ only if a user can reach the feature from
+> the web interface. A feature that is fully implemented, routed and tested but
+> has no screen is marked ⚠️ and says so, because "the service exists" is not the
+> same claim as "the feature works". That distinction was not applied
+> consistently before an audit found attachment upload serving a 404 behind a
+> fully tested service, and six other rows with no interface at all.
+>
+> The gaps are enforced, not just written down:
+> `packages/server/test/requirements.test.ts` fails if a named requirement is
+> neither reachable from the SPA nor listed as deferred with a reason, and fails
+> if something deferred turns out to be wired after all.
+
 ### Issue lifecycle
 
 | Requirement | Status | Where |
 | --- | --- | --- |
 | CRUD ticket operations | ✅ | `services/issue.service.ts` |
-| Customisable workflows | ✅ | `services/workflow.service.ts` — per-project statuses + transitions + WIP limits |
+| Customisable workflows | ⚠️ | `services/workflow.service.ts` — per-project statuses + transitions + WIP limits, and full per-status/per-transition editing endpoints. **No workflow editor screen**: the API is there, the interface never calls it. |
 | `Open → In Progress → Closed` | ✅ | Default workflow, seeded per project |
 | Parent/child ticket nesting | ✅ | `parentId`, cycle detection on both write and re-parent |
 | Dependencies | ✅ | 10 link kinds; blocking cycles rejected |
-| Bulk issue editing | ✅ | `services/bulk.service.ts` — 13 operations, per-row error isolation |
-| Automated stale-issue archiving | ✅ | `services/archive.service.ts` — preview, policy, idempotent run |
-| AI-driven duplicate detection | ✅ | `services/dedupe.service.ts` — see the note below |
+| Bulk issue editing | ⚠️ | `services/bulk.service.ts` — 13 operations, per-row error isolation, dry-run preview. **API only**: the endpoint and its confirmation preview work, but the interface has no multi-select editor. |
+| Automated stale-issue archiving | ⚠️ | `services/archive.service.ts` — preview, policy, idempotent run, scheduler-driven. **API and scheduler only**: nothing lists what would be archived and no button triggers a run. |
+| AI-driven duplicate detection | ⚠️ | `services/dedupe.service.ts` — see the note below. **API only**: scans run and candidates are stored, but no screen lists or dismisses them. |
 
 > **On "AI-driven" duplicate detection.** There is no external model available in
 > this environment, so the detector is a **deterministic local similarity
@@ -163,8 +175,8 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | RBAC | ✅ | Six roles → capability grants → one `can()` check |
 | Multi-project permissions | ✅ | Per-project membership with rank-safe role changes |
 | SSO / SAML | ❌ | **Deliberately not implemented.** Verification code existed and asserted signatures before reading any claim, but configurations could only be listed — never created, edited or deleted, at either the route or service layer — so a deployment had to write to `sso_configurations` by hand. A feature you cannot configure is worse than its absence, so it was removed rather than shipped half-reachable. The table and all code are gone (migration `005_drop_sso.sql`). |
-| Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
-| Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
+| Immutable audit trails | ⚠️ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)`, verified over HTTP by a chain check. The guarantee is airtight and **API-only**: there is no audit-trail screen. |
+| Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke — mintable from the interface |
 | Biometric mobile app login | ⚠️ | **Partially met.** Passkeys via WebAuthn give Face ID / Touch ID / fingerprint sign-in in any browser, and that is fully implemented. The literal requirement — a *mobile app* that authenticates biometrically — is **not** met: this project ships no native app. |
 | Automatic PII/secret scrubbing | ✅ | `scrubSecrets()` — 11 credential patterns + configurable extras |
 
@@ -174,11 +186,11 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | Full-text search queries | ✅ | FTS5 over issues and comments, with bm25 ranking |
 | Custom filtering | ✅ | 20 filter dimensions, keyset pagination |
-| Data export | ✅ | JSON, RFC-4180 CSV, Markdown |
-| Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking |
-| Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid |
-| SLA breach countdown timers | ✅ | Response + resolution clocks, business-hours aware |
-| Live webhook message broadcasting | ✅ | Signed outbound deliveries, retries, auto-disable |
+| Data export | ⚠️ | JSON, RFC-4180 CSV, Markdown. **API only** — export is well tested and works, but the interface offers no export button. |
+| Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking. Branch *rules* themselves are API-only. |
+| Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid, per-role visibility |
+| SLA breach countdown timers | ⚠️ | Response + resolution clocks, business-hours aware. **Partly API-only**: the issue page shows the timing strip, but the per-issue SLA clock, the at-risk list and policy management have no screen. |
+| Live webhook message broadcasting | ⚠️ | Signed outbound deliveries, retries, auto-disable — all working and tested. **No configuration screen**; webhooks are managed by API alone. |
 
 ---
 
@@ -478,6 +490,7 @@ packages/server/test/
 ├── realtime.test.ts       hub fan-out, presence isolation, live WebSocket
 ├── contract.test.ts       every declared route constant is actually routed
 ├── client-contract.test.ts the SPA only calls endpoints the server serves
+├── requirements.test.ts    every named requirement is reachable or deferred
 ├── migration.test.ts      upgrade path from a previously-migrated database
 ├── encoding.test.ts       no mojibake, replacement characters or stray BOMs
 ├── search.test.ts         FTS queries, filters, export

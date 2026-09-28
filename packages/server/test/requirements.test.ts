@@ -1,0 +1,169 @@
+/**
+ * Requirement reachability.
+ *
+ * The requirements matrix claims features are delivered. Three separate kinds of
+ * "exists" had been passing for "works", and each one hid a real failure:
+ *
+ *   1. The service was written and unit-tested, but no route connected it. That
+ *      is how attachment upload served a 404 while `AttachmentService.upload`
+ *      sat fully tested beside it.
+ *   2. The route existed, but the SPA called it with the wrong method or the
+ *      wrong constant -- a 404 or 405 that reads as a broken screen.
+ *   3. Everything was wired, but a guard meant to prevent (1) was satisfied by
+ *      the mere mention of a constant in a comment.
+ *
+ * This file checks the first kind for the features the matrix names, so a
+ * requirement cannot be marked delivered on the strength of a service existing.
+ *
+ * Each entry is a constant the SPA must be able to reach. `client-contract`
+ * then proves the SPA's call has a matching route, and this file proves the
+ * feature is not API-only with no UI at all. A feature that is deliberately
+ * API-only belongs in `API_ONLY_BY_DESIGN` with its reason, so the exemption is
+ * a decision on the record rather than an omission.
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const sharedRoot = resolve(serverRoot, '..', 'shared');
+const webRoot = resolve(serverRoot, '..', 'web', 'src');
+
+/**
+ * Features the requirements matrix names, and the constant the SPA must call
+ * to reach them. A missing entry here is a coverage gap in this file, not in
+ * the product.
+ */
+const MUST_REACH_FROM_UI: Record<string, string> = {
+  // Issue lifecycle
+  'issues.create': 'create a ticket',
+  'issues.update': 'edit a ticket',
+  'issues.transition': 'move a ticket through the workflow',
+  'issues.children': 'parent-child nesting',
+  'issues.link': 'dependencies',
+  'bulk.apply': 'bulk issue editing',
+  'archive.candidates': 'stale-issue archiving, candidate list',
+  'archive.run': 'stale-issue archiving, run',
+  'dedupe.scan': 'duplicate detection, run a scan',
+  'dedupe.candidates': 'duplicate detection, review candidates',
+  // Collaboration
+  'issues.createComment': 'rich-text comment log',
+  'issues.upload': 'multiformat file attachments',
+  'notifications.list': 'in-app notifications',
+  'board.get': 'interactive Kanban board',
+  // Analytics
+  'issues.search': 'full-text search',
+  'export.run': 'data export',
+  'versionControl.repositories': 'version-control linkage',
+  'dashboards.render': 'custom dashboard widgets',
+  'sla.forIssue': 'SLA countdown on an issue',
+  'webhooks.list': 'live webhook configuration',
+  // Access and security
+  'users.create': 'user administration',
+  'users.createGuestToken': 'time-bound guest tokens',
+  'webauthn.registerBegin': 'passkey enrolment',
+  // GitLab
+  'gitlab.connections': 'read a GitLab connection',
+  'gitlab.sync': 'trigger a GitLab sync',
+};
+
+/**
+ * Requirements that are implemented and routed but have no interface yet.
+ *
+ * Each one names what a user cannot do. The list is deliberately not empty and
+ * deliberately not hidden: the README carries the same rows marked ⚠️, and
+ * moving an entry between the two files is an explicit edit that shows up in
+ * review. Closing a gap means deleting its line here *and* changing the README
+ * in the same commit, which is the point.
+ */
+const NOT_YET_IN_UI: Record<string, string> = {
+  'bulk.apply': 'The endpoint and its confirmation-preview route work; there is no multi-select editor in the interface.',
+  'archive.candidates': 'Stale-issue archiving is a scheduled job and an API. No screen lists what it would archive.',
+  'archive.run': 'The archive run can be triggered by API or the scheduler; no button calls it.',
+  'dedupe.scan': 'Duplicate detection runs and stores candidates; the interface never asks for a scan.',
+  'dedupe.candidates': 'Duplicate candidates are recorded but no screen lists or dismisses them.',
+  'export.run': 'JSON/CSV/Markdown export is available over the API only.',
+  'sla.forIssue': 'SLA state is computed and served; the issue page shows the timing strip but not the per-issue SLA clock.',
+  'webhooks.list': 'Webhook delivery, signing and retry all work; there is no configuration screen.',
+  'users.create': 'User administration is API-only; the interface has no people or account screen.',
+};
+
+function spaReferences(): Set<string> {
+  const refs = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) {
+        for (const m of readFileSync(full, 'utf8').matchAll(/\bAPI\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g)) {
+          refs.add(`${m[1]}.${m[2]}`);
+        }
+      }
+    }
+  };
+  walk(webRoot);
+  return refs;
+}
+
+function declaredPaths(): Map<string, string> {
+  const lines = readFileSync(join(sharedRoot, 'src', 'api.ts'), 'utf8').split('\n');
+  const out = new Map<string, string>();
+  let group: string | null = null;
+  for (const line of lines) {
+    const g = line.match(/^ {2}([A-Za-z0-9_]+):\s*\{\s*$/);
+    if (g) {
+      group = g[1] as string;
+      continue;
+    }
+    const e = line.match(/^ {4}([A-Za-z0-9_]+):\s*'(\/api\/[^']+)'/);
+    if (e && group) out.set(`${group}.${e[1]}`, e[2] as string);
+  }
+  return out;
+}
+
+describe('requirements are reachable from the interface', () => {
+  const referenced = spaReferences();
+  const declared = declaredPaths();
+
+  it('names a real constant for every requirement', () => {
+    const unknown = Object.keys(MUST_REACH_FROM_UI).filter((key) => !declared.has(key));
+    assert.deepEqual(unknown, [], 'these requirement anchors name no declared constant');
+  });
+
+  it('anchors every deferred requirement to a constant that exists', () => {
+    const unknown = Object.keys(NOT_YET_IN_UI).filter((key) => !declared.has(key));
+    assert.deepEqual(unknown, [], 'NOT_YET_IN_UI names undeclared constants');
+  });
+
+  it('gives every deferral a real reason', () => {
+    for (const [key, reason] of Object.entries(NOT_YET_IN_UI)) {
+      assert.ok(reason.length > 30, `${key} needs a proper justification, not "${reason}"`);
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(MUST_REACH_FROM_UI, key),
+        `${key} is deferred but is not a named requirement; it does not belong in this list`,
+      );
+    }
+  });
+
+  it('reaches every named requirement from the SPA, or defers it explicitly', () => {
+    const unaccounted = Object.keys(MUST_REACH_FROM_UI)
+      .filter((key) => !referenced.has(key))
+      .filter((key) => NOT_YET_IN_UI[key] === undefined)
+      .map((key) => `${key} (${MUST_REACH_FROM_UI[key]}) -> ${declared.get(key) ?? 'unknown path'}`);
+    assert.deepEqual(
+      unaccounted,
+      [],
+      `a named requirement is neither reachable from the interface nor recorded as deferred:\n  ${unaccounted.join('\n  ')}`,
+    );
+  });
+
+  it('does not defer something the SPA already calls', () => {
+    // A stale deferral is worse than none: it would keep a finished feature
+    // listed as missing.
+    const stale = Object.keys(NOT_YET_IN_UI).filter((key) => referenced.has(key));
+    assert.deepEqual(stale, [], 'these are deferred but the SPA calls them; remove them from the list');
+  });
+});

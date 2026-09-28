@@ -25,6 +25,8 @@ const routeDir = join(serverRoot, 'src', 'routes');
 const KNOWN_GAPS: Record<string, string> = {
   'admin.settings': 'No instance settings route; configuration is environment-driven.',
   'admin.updateSettings': 'No instance settings route; configuration is environment-driven.',
+  'bulk.edit':
+    'A duplicate alias for API.bulk.apply, which is the routed name for POST /api/issues/bulk. Nothing calls it; kept declared rather than deleted so an external consumer does not break on it.',
 };
 
 /** Parse `API` out of the shared source: group -> name -> path. */
@@ -51,7 +53,10 @@ function registeredPaths(): { viaConstant: Set<string>; literals: Set<string> } 
     source += readFileSync(join(routeDir, file), 'utf8');
   }
   const viaConstant = new Set<string>();
-  for (const m of source.matchAll(/API\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g)) {
+  // Scoped to a registration call. A looser pattern would count a *mention* in
+  // a comment as a route, which is how `API.bulk.edit` was "routed" for months:
+  // the only place its name appeared was an explanatory comment.
+  for (const m of source.matchAll(/app\.(?:get|post|patch|put|delete)\(\s*API\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g)) {
     viaConstant.add(`${m[1]}.${m[2]}`);
   }
   const literals = new Set<string>();
