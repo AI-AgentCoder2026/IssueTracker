@@ -321,12 +321,65 @@ export class SlaService {
 
   /** Live countdown state for one issue, one entry per clock. */
   async statusForIssue(issueId: number): Promise<SlaStatus[]> {
+    // A clock created before the issue was resolved still has a null `met_at`,
+    // so it would keep running and eventually report a *false* breach. Settling
+    // on read means the issue page, the dashboard widget and the summary all
+    // agree, whenever they are asked.
+    this.settleClocksForIssue(issueId);
+
     const now = Date.now();
     const rows = this.services.db.all<ClockJoinRow>(
       `${CLOCK_JOIN_SQL} WHERE c.issue_id = ? ORDER BY c.target ASC, c.policy_id ASC`,
       [issueId],
     );
     return rows.map((row) => toStatus(row, now));
+  }
+
+  /**
+   * Mark clocks satisfied by work that has already happened.
+   *
+   * Two signals end a clock:
+   *  * the **resolution** target is met by `issues.resolved_at`;
+   *  * the **response** target is met by a first comment, or by the issue being
+   *    assigned, whichever came first.
+   *
+   * `met_at` is written once and never moved, so it records when the work was
+   * acknowledged rather than when a reader happened to look.
+   */
+  settleClocksForIssue(issueId: number): number {
+    const issue = this.services.db.get<{
+      resolved_at: string | null;
+      assignee_id: number | null;
+      updated_at: string;
+    }>('SELECT resolved_at, assignee_id, updated_at FROM issues WHERE id = ?', [issueId]);
+    if (!issue) return 0;
+
+    const firstComment = this.services.db.get<{ created_at: string }>(
+      'SELECT created_at FROM comments WHERE issue_id = ? ORDER BY created_at ASC LIMIT 1',
+      [issueId],
+    );
+    const responseMetAt =
+      firstComment?.created_at ?? (issue.assignee_id !== null ? issue.updated_at : null);
+
+    const settled = this.services.db.run(
+      `UPDATE sla_clocks
+          SET met_at = CASE
+            WHEN target = 'resolution' AND ? IS NOT NULL THEN ?
+            WHEN target = 'response'  AND ? IS NOT NULL THEN ?
+            ELSE met_at
+          END
+        WHERE issue_id = ?
+          AND met_at IS NULL
+          AND ( (target = 'resolution' AND ? IS NOT NULL)
+             OR (target = 'response'  AND ? IS NOT NULL) )`,
+      [
+        issue.resolved_at, issue.resolved_at,
+        responseMetAt, responseMetAt,
+        issueId,
+        issue.resolved_at, responseMetAt,
+      ],
+    );
+    return settled.changes;
   }
 
   /**
