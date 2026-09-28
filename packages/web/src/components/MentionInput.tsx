@@ -61,7 +61,9 @@ export function MentionInput({
 
   const term = query?.term ?? '';
   const users = useQuery<PublicUser[]>(
-    (signal) => userApi.list({ q: term, limit: 8, signal }),
+    // `search`, not `q`: the server drops an unknown query key, so this used to
+    // ignore the typed term and always suggest the first few users.
+    (signal) => userApi.list({ search: term, limit: 8, signal }),
     [term],
     { enabled: query !== null },
   );

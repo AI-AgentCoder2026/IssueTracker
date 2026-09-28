@@ -694,12 +694,50 @@ export const gitlabApi = {
 // ---------------------------------------------------------------------------
 
 export const userApi = {
-  async list(query?: { q?: string; limit?: number; signal?: AbortSignal }): Promise<PublicUser[]> {
+  /**
+   * The server's query field is `search`, not `q`. Sending `q` meant the
+   * filter was dropped by the schema and every search returned the whole list.
+   */
+  async list(query?: {
+    search?: string;
+    includeInactive?: boolean;
+    limit?: number;
+    signal?: AbortSignal;
+  }): Promise<PublicUser[]> {
     const raw = await http.get<unknown>(API.users.list, {
-      query: { q: query?.q, limit: query?.limit ?? 20 },
+      query: {
+        search: query?.search,
+        includeInactive: query?.includeInactive === true ? 'true' : undefined,
+        limit: query?.limit ?? 100,
+      },
       ...(query?.signal !== undefined ? { signal: query.signal } : {}),
     });
     return asArray(raw, 'users').map(toPublicUser);
+  },
+
+  /**
+   * Administrative creation. The server opens no session: the new account
+   * signs in with the password given here.
+   */
+  async createUser(input: {
+    username: string;
+    email: string;
+    displayName: string;
+    password: string;
+    instanceRole?: string;
+  }): Promise<PublicUser> {
+    const raw = await http.post<unknown>(API.users.create, input);
+    return toPublicUser(asRecord(unwrap(raw))['user']);
+  },
+
+  async updateUser(id: number, patch: Record<string, unknown>): Promise<PublicUser> {
+    const raw = await http.patch<unknown>(fill(API.users.update, { id }), patch);
+    return toPublicUser(asRecord(unwrap(raw))['user']);
+  },
+
+  async deactivate(id: number): Promise<PublicUser> {
+    const raw = await http.post<unknown>(fill(API.users.deactivate, { id }), {});
+    return toPublicUser(asRecord(unwrap(raw))['user']);
   },
 
   async guestTokens(projectId: ProjectId, signal?: AbortSignal): Promise<GuestToken[]> {

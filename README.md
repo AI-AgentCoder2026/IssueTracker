@@ -174,6 +174,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | RBAC | ✅ | Six roles → capability grants → one `can()` check |
 | Multi-project permissions | ✅ | Per-project membership with rank-safe role changes |
+| User administration | ✅ | Instance-wide people screen at `/people`: add accounts, set instance roles, search, deactivate and reactivate. Deactivation is reversible and keeps history; an admin cannot deactivate themselves. |
 | SSO / SAML | ❌ | **Deliberately not implemented.** Verification code existed and asserted signatures before reading any claim, but configurations could only be listed — never created, edited or deleted, at either the route or service layer — so a deployment had to write to `sso_configurations` by hand. A feature you cannot configure is worse than its absence, so it was removed rather than shipped half-reachable. The table and all code are gone (migration `005_drop_sso.sql`). |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)`. Reachable at `/audit`: filter by action, entity and actor, page through history, and recompute the chain on demand. |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke — mintable from the interface |

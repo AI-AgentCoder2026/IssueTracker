@@ -15,6 +15,7 @@ import { IssueList } from './pages/IssueList';
 import { Login } from './pages/Login';
 import { NewIssue } from './pages/NewIssue';
 import { Notifications } from './pages/Notifications';
+import { AdminUsers } from './pages/AdminUsers';
 import { AuditViewer } from './pages/AuditViewer';
 import { WebhookSettings } from './pages/WebhookSettings';
 import { Projects } from './pages/Projects';
@@ -118,6 +119,7 @@ export function App(): JSX.Element {
                 <Route path="sla" element={<ProjectSla />} />
                 <Route path="webhooks" element={<WebhookSettings />} />
                 <Route path="audit" element={<AuditViewer />} />
+                <Route path="people" element={<AdminUsers />} />
                 <Route path="dashboards" element={<Dashboard />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />}>

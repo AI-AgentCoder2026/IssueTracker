@@ -18,8 +18,8 @@
  * Each entry is a constant the SPA must be able to reach. `client-contract`
  * then proves the SPA's call has a matching route, and this file proves the
  * feature is not API-only with no UI at all. A feature that is deliberately
- * API-only belongs in `API_ONLY_BY_DESIGN` with its reason, so the exemption is
- * a decision on the record rather than an omission.
+ * API-only belongs in `NOT_YET_IN_UI` with its reason, so the exemption is a
+ * decision on the record rather than an omission.
  */
 
 import { describe, it } from 'node:test';
@@ -79,9 +79,16 @@ const MUST_REACH_FROM_UI: Record<string, string> = {
  * review. Closing a gap means deleting its line here *and* changing the README
  * in the same commit, which is the point.
  */
-const NOT_YET_IN_UI: Record<string, string> = {
-  'users.create': 'User administration is API-only; the interface has no people or account screen.',
-};
+/**
+ * Requirements that are implemented and routed but have no interface yet.
+ *
+ * Empty, and that is the point: every requirement the matrix names is now
+ * reachable from the SPA. Adding a line here is a deliberate statement that a
+ * feature ships without a screen, and the README's matrix carries the same ⚠️.
+ * Closing a gap means deleting the line *and* updating the README in the same
+ * commit, which is what makes the two impossible to drift apart silently.
+ */
+const NOT_YET_IN_UI: Record<string, string> = {};
 
 function spaReferences(): Set<string> {
   const refs = new Set<string>();

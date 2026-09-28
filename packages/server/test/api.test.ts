@@ -485,6 +485,148 @@ describe('GitLab integration over HTTP', () => {
   });
 });
 
+describe('user administration over HTTP', () => {
+  let staffA = 0;
+
+  before(async () => {
+    for (const [username, displayName] of [
+      ['wren', 'Wren Halliday'],
+      ['xavier', 'Xavier Pace'],
+      ['yasmin', 'Yasmin Rahal'],
+    ] as const) {
+      const created = await post(API.users.create, {
+        username,
+        email: `${username}@example.com`,
+        displayName,
+        password: 'Sup3rSecret!Pass',
+      });
+      assert.equal(created.status, 201, `user create failed: ${JSON.stringify(created.body)}`);
+      if (username === 'wren') staffA = created.body.user.id;
+    }
+  });
+
+  it('lists every account with a total', async () => {
+    const response = await get(API.users.list);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(Array.isArray(response.body.users));
+    assert.equal(response.body.total, response.body.users.length);
+    assert.ok(
+      response.body.users.some((u: { username: string }) => u.username === 'wren'),
+      'a created account appears in the list',
+    );
+  });
+
+  it('filters by search across username, email and display name', async () => {
+    // The query field is `search`. A client sending `q` has its filter dropped
+    // by the schema and gets the whole list back, which looks exactly like a
+    // search that matched everything.
+    const byUsername = await get(`${API.users.list}?search=wren`);
+    assert.equal(byUsername.status, 200);
+    assert.equal(byUsername.body.users.length, 1, 'a username search must narrow to one');
+    assert.equal(byUsername.body.users[0].username, 'wren');
+
+    const byDisplay = await get(`${API.users.list}?search=${encodeURIComponent('Xavier Pace')}`);
+    assert.equal(byDisplay.status, 200);
+    assert.equal(byDisplay.body.users.length, 1);
+    assert.equal(byDisplay.body.users[0].username, 'xavier');
+
+    const byEmail = await get(`${API.users.list}?search=rahal`);
+    assert.equal(byEmail.status, 200);
+    assert.equal(byEmail.body.users.length, 1);
+    assert.equal(byEmail.body.users[0].username, 'yasmin');
+
+    const noMatch = await get(`${API.users.list}?search=nobodyatall`);
+    assert.equal(noMatch.status, 200);
+    assert.deepEqual(noMatch.body.users, [], 'a search matching nothing returns nothing');
+  });
+
+  it('includes the instance role, so an admin can see who is one', async () => {
+    const response = await get(`${API.users.list}?search=wren`);
+    assert.equal(response.status, 200);
+    // `withoutPassword` is typed against `User` but receives a `StoredUser`, so
+    // the field is present at runtime and merely absent from the type.
+    assert.equal(
+      response.body.users[0].instanceRole,
+      'user',
+      'the instance role must be readable, or an admin screen cannot show it',
+    );
+  });
+
+  it('promotes a user and reflects it', async () => {
+    const promoted = await call('PATCH', `/api/users/${staffA}`, {
+      body: { instanceRole: 'staff' },
+    });
+    assert.equal(promoted.status, 200, JSON.stringify(promoted.body));
+
+    const read = await get(`${API.users.list}?search=wren`);
+    assert.equal(read.body.users[0].instanceRole, 'staff');
+  });
+
+  it('deactivates and reactivates without deleting history', async () => {
+    const off = await post(`/api/users/${staffA}/deactivate`, {});
+    assert.equal(off.status, 200, JSON.stringify(off.body));
+    assert.equal(off.body.user.isActive, false);
+
+    // Hidden by default, present on request — that is the point of deactivating
+    // rather than deleting.
+    const hidden = await get(`${API.users.list}?search=wren`);
+    assert.equal(hidden.body.users.length, 0, 'a deactivated account is hidden by default');
+    const shown = await get(`${API.users.list}?search=wren&includeInactive=true`);
+    assert.equal(shown.body.users.length, 1, 'but it is still there and can be found');
+
+    const on = await call('PATCH', `/api/users/${staffA}`, { body: { isActive: true } });
+    assert.equal(on.status, 200);
+    const back = await get(`${API.users.list}?search=wren`);
+    assert.equal(back.body.users.length, 1, 'reactivating restores access');
+  });
+
+  it('refuses to let an administrator deactivate their own account', async () => {
+    // Otherwise the last administrator locks everyone out of the very screens
+    // that would let them back in.
+    const response = await post(`/api/users/${adminId}/deactivate`, {});
+    assert.equal(response.status, 400, 'self-deactivation must be refused');
+  });
+
+  it('rejects a weak password and a duplicate username', async () => {
+    const weak = await post(API.users.create, {
+      username: 'weakling',
+      email: 'weak@example.com',
+      displayName: 'Weak',
+      password: 'short',
+    });
+    assert.equal(weak.status, 422, 'the password policy is enforced');
+
+    const duplicate = await post(API.users.create, {
+      username: 'wren',
+      email: 'other@example.com',
+      displayName: 'Clash',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(duplicate.status, 409, 'usernames are unique');
+  });
+
+  it('refuses user administration without the instance permission', async () => {
+    const user = await post(API.users.create, {
+      username: 'notadmin',
+      email: 'notadmin@example.com',
+      displayName: 'Not Admin',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'notadmin', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const list = await fetch(`${baseUrl}${API.users.list}`, { headers: { cookie: cookie as string } });
+    assert.equal(list.status, 403, 'the people list is instance-admin only');
+  });
+});
+
 describe('audit trail over HTTP', () => {
   it('verifies the hash chain', async () => {
     const response = await get('/api/admin/audit/verify');
