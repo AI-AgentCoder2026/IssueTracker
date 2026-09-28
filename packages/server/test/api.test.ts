@@ -746,6 +746,88 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('duplicate review endpoints', () => {
+  let dupProject = 0;
+  let pairKey = '';
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'DUP', name: 'Duplicates' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    dupProject = created.body.project.id;
+
+    // Two issues with near-identical titles, so the scan has something to find.
+    for (const title of [
+      'Checkout times out when applying a discount code',
+      'Checkout times out when applying discount code',
+    ]) {
+      const issue = await post(API.issues.create, { projectId: dupProject, title });
+      assert.equal(issue.status, 200, `issue create failed: ${JSON.stringify(issue.body)}`);
+    }
+    pairKey = `${dupProject}`;
+  });
+
+  it('scans, lists, and dismisses a detected pair', async () => {
+    // `autoLink` is what persists a scan as reviewable links; without it the
+    // server compares and returns without storing anything.
+    const scan = await post(API.dedupe.scan, {
+      projectId: dupProject,
+      minConfidence: 0.5,
+      autoLink: true,
+    });
+    assert.equal(scan.status, 200, `scan failed: ${JSON.stringify(scan.body)}`);
+    assert.ok(scan.body.count >= 1, 'the near-identical titles should be detected');
+
+    const listed = await get(`${API.dedupe.candidates}?projectId=${pairKey}`);
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const candidate = listed.body.candidates[0];
+    assert.ok(candidate, 'a detected pair should be listed for review');
+    assert.ok(candidate.sourceKey && candidate.targetKey, 'both sides of the pair are named');
+    assert.ok(candidate.sourceTitle && candidate.targetTitle, 'both titles are returned for review');
+
+    // Dismiss removes the detected link, and only the link.
+    const dismissed = await call('DELETE', `/api/dedupe/candidates/${candidate.linkId}`);
+    assert.equal(dismissed.status, 200, JSON.stringify(dismissed.body));
+
+    const after = await get(`${API.dedupe.candidates}?projectId=${pairKey}`);
+    assert.ok(
+      !after.body.candidates.some((c: { linkId: number }) => c.linkId === candidate.linkId),
+      'the dismissed pair must leave the review queue',
+    );
+
+    // Neither issue may be touched by a dismissal. Checked by id rather than
+    // by counting a search, which spans every project the caller can see.
+    for (const id of [candidate.sourceIssueId, candidate.targetIssueId]) {
+      const issue = await get(`/api/issues/${id}`);
+      assert.equal(issue.status, 200, `dismissing a pair must not remove issue ${id}`);
+      assert.ok(issue.body.issue.key, 'the issue keeps its key');
+    }
+  });
+
+  it('refuses to list candidates for a project the caller cannot read', async () => {
+    const outsider = await post(API.users.create, {
+      username: 'dupoutsider',
+      email: 'dupoutsider@example.com',
+      displayName: 'Dup Outsider',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(outsider.status, 201);
+
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'dupoutsider', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const response = await fetch(`${baseUrl}${API.dedupe.candidates}?projectId=${dupProject}`, {
+      headers: { cookie: cookie as string },
+    });
+    assert.equal(response.status, 403, 'duplicate candidates must not leak across projects');
+  });
+});
+
 describe('workflow editing endpoints', () => {
   const base = (suffix: string) => `/api/projects/${projectId}/workflow${suffix}`;
 

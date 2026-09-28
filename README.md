@@ -139,13 +139,13 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Requirement | Status | Where |
 | --- | --- | --- |
 | CRUD ticket operations | ✅ | `services/issue.service.ts` |
-| Customisable workflows | ⚠️ | `services/workflow.service.ts` — per-project statuses + transitions + WIP limits, and full per-status/per-transition editing endpoints. **No workflow editor screen**: the API is there, the interface never calls it. |
+| Customisable workflows | ✅ | `services/workflow.service.ts` — per-project statuses + transitions + WIP limits, with a full editor at `SettingsWorkflow.tsx` (add, rename, recolour, reorder statuses and transitions; WIP limits). The whole-workflow `PUT` and the standalone list endpoints exist for API clients but the editor uses the per-entity routes. |
 | `Open → In Progress → Closed` | ✅ | Default workflow, seeded per project |
 | Parent/child ticket nesting | ✅ | `parentId`, cycle detection on both write and re-parent |
 | Dependencies | ✅ | 10 link kinds; blocking cycles rejected |
 | Bulk issue editing | ⚠️ | `services/bulk.service.ts` — 13 operations, per-row error isolation, dry-run preview. **API only**: the endpoint and its confirmation preview work, but the interface has no multi-select editor. |
 | Automated stale-issue archiving | ⚠️ | `services/archive.service.ts` — preview, policy, idempotent run, scheduler-driven. **API and scheduler only**: nothing lists what would be archived and no button triggers a run. |
-| AI-driven duplicate detection | ⚠️ | `services/dedupe.service.ts` — see the note below. **API only**: scans run and candidates are stored, but no screen lists or dismisses them. |
+| AI-driven duplicate detection | ⚠️ | `services/dedupe.service.ts` — see the note below. Reachable: `/duplicates` lists detected pairs, runs a scan, and dismisses or confirms each one. The detector is lexical, not a model. |
 
 > **On "AI-driven" duplicate detection.** There is no external model available in
 > this environment, so the detector is a **deterministic local similarity

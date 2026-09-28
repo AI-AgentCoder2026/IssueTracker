@@ -10,6 +10,7 @@ import { Board } from './pages/Board';
 import { Dashboard } from './pages/Dashboard';
 import { GuestAccess } from './pages/GuestAccess';
 import { IssueDetail } from './pages/IssueDetail';
+import { Duplicates } from './pages/Duplicates';
 import { IssueList } from './pages/IssueList';
 import { Login } from './pages/Login';
 import { NewIssue } from './pages/NewIssue';
@@ -108,6 +109,7 @@ export function App(): JSX.Element {
                 <Route path="issues" element={<IssueList />} />
                 <Route path="issues/new" element={<NewIssue />} />
                 <Route path="issues/:issueId" element={<IssueDetail />} />
+                <Route path="duplicates" element={<Duplicates />} />
                 <Route path="dashboards" element={<Dashboard />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />}>

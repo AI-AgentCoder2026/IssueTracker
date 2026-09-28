@@ -21,7 +21,16 @@ const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sharedRoot = resolve(serverRoot, '..', 'shared');
 const routeDir = join(serverRoot, 'src', 'routes');
 
-/** Declared-but-unrouted constants, each with why it is still open. */
+/**
+ * Declared-but-unrouted constants, each with why it is still open.
+ *
+ * A gap means *no route at this path*. The contract pins a path per constant
+ * and no method, so this list cannot speak to methods: a path served by POST
+ * counts as served. Where a method is genuinely missing but the path is not,
+ * the fact is pinned by a dedicated assertion instead — see the
+ * `leaves no method for a declared path to hide behind` case for
+ * `GET /api/issues`, which is served for create but not for list.
+ */
 const KNOWN_GAPS: Record<string, string> = {
   'admin.settings': 'No instance settings route; configuration is environment-driven.',
   'admin.updateSettings': 'No instance settings route; configuration is environment-driven.',
@@ -60,7 +69,11 @@ function registeredPaths(): { viaConstant: Set<string>; literals: Set<string> } 
     viaConstant.add(`${m[1]}.${m[2]}`);
   }
   const literals = new Set<string>();
-  for (const m of source.matchAll(/app\.(?:get|post|patch|put|delete)\('(\/api\/[^']+)'/g)) {
+  for (const m of source.matchAll(/app\.(?:get|post|patch|put|delete)\(\s*'(\/api\/[^']*)'/g)) {
+    // Path-only, deliberately. The contract declares a path per constant and no
+    // method, so a method-aware match here would flag every literal-registered
+    // endpoint as unrouted. The method is checked where it is actually known --
+    // in `client-contract.test.ts`, which reads the method the SPA sends.
     literals.add((m[1] as string).replace(/:[A-Za-z]+/g, ':*'));
   }
   return { viaConstant, literals };
@@ -72,6 +85,29 @@ describe('API contract coverage', () => {
 
   it('finds the shared contract', () => {
     assert.ok(declared.size > 100, `only parsed ${declared.size} constants; the parser drifted`);
+  });
+
+  it('leaves no method for a declared path to hide behind', () => {
+    // The literal-path fallback above is method-blind, so a `POST` on a path
+    // can vouch for a `GET` that does not exist. That is exactly how
+    // `GET /api/issues` stayed unrouted while the contract test passed. Rather
+    // than guess a method from a constant's name, assert the one case we know
+    // is real, so a future route landing on this path has to update it.
+    const routeDir = join(serverRoot, 'src', 'routes');
+    let source = '';
+    for (const file of readdirSync(routeDir).filter((f) => f.endsWith('.ts'))) {
+      source += readFileSync(join(routeDir, file), 'utf8');
+    }
+    assert.equal(
+      /app\.get\(\s*API\.issues\.list\b/.test(source),
+      false,
+      'if GET /api/issues is implemented, implement it through API.issues.list and drop the gap',
+    );
+    assert.match(
+      source,
+      /app\.post\(\s*API\.issues\.create|app\.post\('\/api\/issues'/,
+      'POST /api/issues (create) must stay registered — it is the one method this path does serve',
+    );
   });
 
   it('routes every declared constant that is not a known gap', () => {

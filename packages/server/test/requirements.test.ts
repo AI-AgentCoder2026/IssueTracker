@@ -83,8 +83,6 @@ const NOT_YET_IN_UI: Record<string, string> = {
   'bulk.apply': 'The endpoint and its confirmation-preview route work; there is no multi-select editor in the interface.',
   'archive.candidates': 'Stale-issue archiving is a scheduled job and an API. No screen lists what it would archive.',
   'archive.run': 'The archive run can be triggered by API or the scheduler; no button calls it.',
-  'dedupe.scan': 'Duplicate detection runs and stores candidates; the interface never asks for a scan.',
-  'dedupe.candidates': 'Duplicate candidates are recorded but no screen lists or dismisses them.',
   'export.run': 'JSON/CSV/Markdown export is available over the API only.',
   'sla.forIssue': 'SLA state is computed and served; the issue page shows the timing strip but not the per-issue SLA clock.',
   'webhooks.list': 'Webhook delivery, signing and retry all work; there is no configuration screen.',
@@ -165,5 +163,27 @@ describe('requirements are reachable from the interface', () => {
     // listed as missing.
     const stale = Object.keys(NOT_YET_IN_UI).filter((key) => referenced.has(key));
     assert.deepEqual(stale, [], 'these are deferred but the SPA calls them; remove them from the list');
+  });
+
+  it('checks reachability by screen, not by constant', () => {
+    // The method has a trap in it, and it caught me. A *declared and routed*
+    // constant that the SPA never calls is not evidence that a feature has no
+    // interface: `API.workflow.update`, `workflow.statuses` and
+    // `workflow.transitions` are all uncalled because the workflow editor uses
+    // the per-entity routes instead, and the editor very much exists.
+    //
+    // So this asserts the shape of the evidence. A page may exist for a
+    // feature whose constants are partly unused, and the matrix is right to
+    // call it delivered; the converse -- a page that exists but cannot reach
+    // the server -- is what `client-contract.test.ts` exists to catch.
+    const workflowPage = join(webRoot, 'pages', 'SettingsWorkflow.tsx');
+    assert.ok(
+      readFileSync(workflowPage, 'utf8').includes('workflowApi.createStatus'),
+      'the workflow editor should drive the per-status routes it was built for',
+    );
+    assert.ok(
+      referenced.has('workflow.createStatus'),
+      'if the editor exists, the per-status route it calls must be referenced',
+    );
   });
 });

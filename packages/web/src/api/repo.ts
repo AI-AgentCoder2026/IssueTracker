@@ -1019,4 +1019,65 @@ export const passkeyApi = {
     return num(raw['revoked']);
   },
 };
+// ---------------------------------------------------------------------------
+// Duplicate detection
+// ---------------------------------------------------------------------------
+
+/** One pending duplicate pair, as the server's `listPending` reports it. */
+export interface DuplicateCandidate {
+  linkId: number;
+  sourceIssueId: number;
+  sourceKey: string;
+  sourceTitle: string;
+  targetIssueId: number;
+  targetKey: string;
+  targetTitle: string;
+  /** Null when the pair matched exactly rather than by score. */
+  confidence: number | null;
+  createdAt: string;
+}
+
+function toDuplicateCandidate(value: unknown): DuplicateCandidate {
+  const r = asRecord(value);
+  const confidence = r.confidence === null || r.confidence === undefined ? null : num(r.confidence);
+  return {
+    linkId: num(r.linkId),
+    sourceIssueId: num(r.sourceIssueId),
+    sourceKey: str(r.sourceKey),
+    sourceTitle: str(r.sourceTitle),
+    targetIssueId: num(r.targetIssueId),
+    targetKey: str(r.targetKey),
+    targetTitle: str(r.targetTitle),
+    confidence: confidence === null || confidence === 0 ? null : confidence,
+    createdAt: str(r.createdAt),
+  };
+}
+
+export const dedupeApi = {
+  async candidates(projectId: ProjectId, signal?: AbortSignal): Promise<DuplicateCandidate[]> {
+    const raw = await http.get<unknown>(`${fill(API.dedupe.candidates, { projectId })}?projectId=${projectId}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(raw, 'candidates').map(toDuplicateCandidate);
+  },
+
+  /**
+   * `autoLink: true` is what makes a scan useful here. Without it the server
+   * compares and returns without persisting anything, so the review list would
+   * stay empty and a "Run scan" button would appear to do nothing.
+   */
+  async scan(projectId: ProjectId, body: Record<string, unknown>): Promise<DuplicateCandidate[]> {
+    const raw = await http.post<unknown>(API.dedupe.scan, {
+      minConfidence: 0.6,
+      ...body,
+      projectId,
+      autoLink: true,
+    });
+    return asArray(unwrap(raw), 'candidates').map(toDuplicateCandidate);
+  },
+
+  dismiss: (linkId: number) =>
+    http.delete<unknown>(fill(API.dedupe.dismiss, { linkId })),
+};
+
 export type { SyncMode, WorkflowTransition, DependencyKind };
