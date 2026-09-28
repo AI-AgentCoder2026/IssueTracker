@@ -486,7 +486,8 @@ packages/server/test/
 ├── collaboration.test.ts  comments, mentions, attachments, search filters
 ├── attachment.test.ts     upload limits, traversal, content sniffing
 ├── webhook.test.ts        SSRF defence, signatures, retry, auto-disable
-├── services.test.ts       project, member and guest-token rules
+├── services.test.ts       guest tokens, API tokens, session lifecycle
+├── project.test.ts        creation, membership, labels, milestones, stats
 └── api.test.ts            end-to-end over HTTP
 ```
 

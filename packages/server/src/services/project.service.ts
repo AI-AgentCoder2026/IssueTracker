@@ -287,6 +287,14 @@ export class ProjectService {
       [projectId, userId],
     );
 
+    // Adding a member that does not exist would otherwise fail on the
+    // `project_members.user_id` foreign key, which surfaces as an opaque
+    // database error instead of naming the thing that is missing.
+    if (!target) {
+      const user = this.db.get<{ id: number }>('SELECT id FROM users WHERE id = ?', [userId]);
+      if (!user) throw notFound('User', userId);
+    }
+
     if (ctx.actorRole && ROLE_RANK[ctx.actorRole] < ROLE_RANK[role]) {
       throw forbidden(`Your role cannot grant "${role}" — it outranks you`);
     }
@@ -429,8 +437,18 @@ export class ProjectService {
     const sets: string[] = [];
     const params: Array<string | number> = [];
     if (patch.name !== undefined) {
+      // Renaming re-slugs the row, so the slug can collide with another label
+      // in this project. The unique index would reject it, but as an opaque
+      // database error; check first so the caller gets a real conflict.
+      const slug = slugify(patch.name);
+      const clash = this.db.get<{ id: number }>(
+        'SELECT id FROM labels WHERE project_id = ? AND slug = ? AND id <> ?',
+        [projectId, slug, labelId],
+      );
+      if (clash) throw conflict(`A label named "${patch.name}" already exists`, { slug });
+
       sets.push('name = ?', 'slug = ?');
-      params.push(patch.name, slugify(patch.name));
+      params.push(patch.name, slug);
     }
     if (patch.color !== undefined) {
       sets.push('color = ?');
@@ -555,6 +573,10 @@ export class ProjectService {
     if (patch.dueDate !== undefined) assign('due_date', patch.dueDate);
     if (patch.startDate !== undefined) assign('start_date', patch.startDate);
     if (patch.state === 'closed') assign('closed_at', nowIso());
+    // Reopening must forget when it was closed, otherwise a live milestone
+    // still reports a closure time and "time to close" is measured from a
+    // moment it was not actually closed.
+    if (patch.state !== undefined && patch.state !== 'closed') assign('closed_at', null);
 
     if (sets.length > 0) {
       sets.push('updated_at = ?');
@@ -613,7 +635,15 @@ export class ProjectService {
          SUM(CASE WHEN state NOT IN ('closed','resolved','wont_fix','duplicate') THEN 1 ELSE 0 END) AS open,
          SUM(CASE WHEN state IN ('closed','resolved') THEN 1 ELSE 0 END) AS closed,
          SUM(CASE WHEN archived = 1 THEN 1 ELSE 0 END) AS archived,
-         SUM(CASE WHEN due_date IS NOT NULL AND due_date < strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END) AS overdue,
+         -- Overdue means "live work past its deadline", matching the timing
+         -- service, which measures lateness to resolution. A delivered issue
+         -- was late once and is now done; counting it makes a project look
+         -- permanently in breach, and an archived issue is off the board.
+         SUM(CASE WHEN archived = 0
+                   AND state NOT IN ('closed','resolved','wont_fix','duplicate')
+                   AND due_date IS NOT NULL
+                   AND due_date < strftime('%Y-%m-%dT%H:%M:%fZ','now')
+              THEN 1 ELSE 0 END) AS overdue,
          SUM(CASE WHEN assignee_id IS NULL THEN 1 ELSE 0 END) AS unassigned
        FROM issues WHERE project_id = ?`,
       [projectId],
@@ -726,12 +756,17 @@ export class ProjectService {
 
 /** URL-safe slug used for label lookup. */
 export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
+  return (
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      // Truncating can cut mid-token and expose a dangling dash, which would
+      // not match the untruncated slug on the way back in.
+      .slice(0, 60)
+      .replace(/-+$/, '')
+  );
 }
 
 export type { CreateLabelInput, CreateMilestoneInput, CreateProjectInput, UpdateProjectInput };
