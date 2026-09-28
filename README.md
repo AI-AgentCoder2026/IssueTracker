@@ -284,9 +284,21 @@ npm start
 
 ### Working on the code
 
+Build the shared contract once after cloning. The other two workspaces import
+it from `dist`, so a fresh checkout fails to typecheck or boot until this has
+run:
+
+```bash
+npm install
+npm run build --workspace @tracker/shared
+```
+
+Then:
+
 ```bash
 npm run dev:server   # API with file watching
 npm run dev:web      # Vite dev server, proxying /api and /ws to :4000
+npm test             # both suites, 642 tests
 ```
 
 Read [`docs/foundation.md`](docs/foundation.md) before adding a service or a
