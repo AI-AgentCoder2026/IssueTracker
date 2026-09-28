@@ -144,7 +144,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Parent/child ticket nesting | ✅ | `parentId`, cycle detection on both write and re-parent |
 | Dependencies | ✅ | 10 link kinds; blocking cycles rejected |
 | Bulk issue editing | ✅ | `services/bulk.service.ts` — 13 operations, per-row error isolation, dry-run preview. Reachable: multi-select in the issue list opens a bulk bar that previews what would change before anything is written. |
-| Automated stale-issue archiving | ⚠️ | `services/archive.service.ts` — preview, policy, idempotent run, scheduler-driven. **API and scheduler only**: nothing lists what would be archived and no button triggers a run. |
+| Automated stale-issue archiving | ✅ | `services/archive.service.ts` — policy, preview, idempotent run, scheduler-driven. Reachable at `/archive`: set the policy, see what it would archive and why, confirm the run. |
 | AI-driven duplicate detection | ⚠️ | `services/dedupe.service.ts` — see the note below. Reachable: `/duplicates` lists detected pairs, runs a scan, and dismisses or confirms each one. The detector is lexical, not a model. |
 
 > **On "AI-driven" duplicate detection.** There is no external model available in

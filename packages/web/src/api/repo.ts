@@ -1080,6 +1080,90 @@ export const dedupeApi = {
     http.delete<unknown>(fill(API.dedupe.dismiss, { linkId })),
 };
 
+// ---------------------------------------------------------------------------
+// Stale-issue archiving
+// ---------------------------------------------------------------------------
+
+export interface ArchivePolicy {
+  inactiveDays: number;
+  states: string[];
+  skipIssuesWithOpenSubtasks: boolean;
+  requireCommentWithinDays: number | null;
+  enabled: boolean;
+}
+
+export interface ArchiveCandidate {
+  issueId: number;
+  key: string;
+  title: string;
+  state: string;
+  lastActivityAt: string;
+  daysInactive: number;
+  reasons: string[];
+}
+
+export interface ArchiveRunResult {
+  archived: number;
+  skipped: number;
+  issues: string[];
+}
+
+function toArchivePolicy(value: unknown): ArchivePolicy | null {
+  if (value === null || value === undefined) return null;
+  const r = asRecord(value);
+  const within = r.requireCommentWithinDays;
+  return {
+    inactiveDays: num(r.inactiveDays, 180),
+    states: asArray(r.states).map((s) => str(s)),
+    skipIssuesWithOpenSubtasks: bool(r.skipIssuesWithOpenSubtasks, true),
+    // Null means "do not require a comment", which is different from zero.
+    requireCommentWithinDays: within === null || within === undefined ? null : num(within),
+    enabled: bool(r.enabled, true),
+  };
+}
+
+function toArchiveCandidate(value: unknown): ArchiveCandidate {
+  const r = asRecord(value);
+  return {
+    issueId: num(r.issueId),
+    key: str(r.key),
+    title: str(r.title),
+    state: str(r.state),
+    lastActivityAt: str(r.lastActivityAt),
+    daysInactive: num(r.daysInactive),
+    reasons: asArray(r.reasons).map((reason) => str(reason)).filter((reason) => reason !== ''),
+  };
+}
+
+export const archiveApi = {
+  async policy(projectId: ProjectId, signal?: AbortSignal): Promise<ArchivePolicy | null> {
+    const raw = await http.get<unknown>(`${API.archive.policy}?projectId=${projectId}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return toArchivePolicy(asRecord(unwrap(raw))['policy']);
+  },
+
+  savePolicy: (projectId: ProjectId, policy: Record<string, unknown>) =>
+    http.put<unknown>(API.archive.policy, { projectId, ...policy }),
+
+  async candidates(projectId: ProjectId, signal?: AbortSignal): Promise<ArchiveCandidate[]> {
+    const raw = await http.get<unknown>(`${API.archive.candidates}?projectId=${projectId}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(unwrap(raw), 'candidates').map(toArchiveCandidate);
+  },
+
+  async run(projectId: ProjectId): Promise<ArchiveRunResult> {
+    const raw = await http.post<unknown>(API.archive.run, { projectId });
+    const r = asRecord(unwrap(raw));
+    return {
+      archived: num(r.archived),
+      skipped: num(r.skipped),
+      issues: asArray(r.issues).map((k) => str(k)),
+    };
+  },
+};
+
 export const exportApi = {
   /**
    * Downloads an export. Returns the blob and the filename the server chose

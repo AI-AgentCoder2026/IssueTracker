@@ -746,6 +746,141 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('stale-issue archiving over HTTP', () => {
+  let archProject = 0;
+  let staleKey = '';
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'ARCH', name: 'Archive' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    archProject = created.body.project.id;
+
+    // Two issues: one quiet for a year, one touched today. A 30-day policy
+    // should reach exactly one of them.
+    const stale = await post(API.issues.create, { projectId: archProject, title: 'forgotten work' });
+    const fresh = await post(API.issues.create, { projectId: archProject, title: 'in flight' });
+    assert.equal(stale.status, 200, `issue create failed: ${JSON.stringify(stale.body)}`);
+    assert.equal(fresh.status, 200, `issue create failed: ${JSON.stringify(fresh.body)}`);
+    staleKey = stale.body.issue.key;
+
+    // Age is set directly rather than by waiting a year: both the candidate
+    // query and the search index read `updated_at`.
+    const longAgo = new Date(Date.now() - 365 * 86_400_000).toISOString();
+    tracker.db.run('UPDATE issues SET updated_at = ? WHERE id = ?', [
+      longAgo,
+      stale.body.issue.id,
+    ]);
+  });
+
+  const archivedFlag = (key: string): number =>
+    Number(
+      (tracker.db.get<{ archived: number }>('SELECT archived FROM issues WHERE key = ?', [key]) ??
+        {})['archived'] ?? 0,
+    );
+
+  it('reports no policy before one is set', async () => {
+    const response = await get(`${API.archive.policy}?projectId=${archProject}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.policy, null, 'a project starts with no archive policy');
+  });
+
+  it('saves a policy and reads it back', async () => {
+    const saved = await call('PUT', API.archive.policy, {
+      body: {
+        projectId: archProject,
+        inactiveDays: 30,
+        states: ['closed'],
+        skipIssuesWithOpenSubtasks: true,
+        requireCommentWithinDays: null,
+        enabled: true,
+      },
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal(saved.body.policy.inactiveDays, 30);
+
+    const read = await get(`${API.archive.policy}?projectId=${archProject}`);
+    assert.equal(read.body.policy.inactiveDays, 30);
+    // Null means "no comment requirement"; zero is a different instruction and
+    // must not be what a blank field turns into.
+    assert.equal(read.body.policy.requireCommentWithinDays, null);
+  });
+
+  it('rejects a policy the schema will not accept', async () => {
+    const response = await call('PUT', API.archive.policy, {
+      body: { projectId: archProject, inactiveDays: 0 },
+    });
+    assert.equal(response.status, 422, 'inactiveDays has a documented minimum of 1');
+  });
+
+  it('lists candidates and says why each one qualifies', async () => {
+    const response = await get(`${API.archive.candidates}?projectId=${archProject}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    for (const candidate of response.body.candidates) {
+      assert.ok(candidate.key, 'a candidate names its issue');
+      assert.ok(Array.isArray(candidate.reasons), 'a candidate explains itself');
+      assert.equal(typeof candidate.daysInactive, 'number');
+    }
+  });
+
+  it('archives what the policy matches and reports the outcome', async () => {
+    const run = await post(API.archive.run, { projectId: archProject });
+    assert.equal(run.status, 200, JSON.stringify(run.body));
+    assert.equal(typeof run.body.archived, 'number');
+    assert.equal(typeof run.body.skipped, 'number');
+    assert.ok(Array.isArray(run.body.issues), 'the run names the issues it touched');
+
+    for (const key of run.body.issues) {
+      assert.equal(archivedFlag(key), 1, `${key} should be archived after the run`);
+    }
+    // Whatever was archived must still be readable — archiving hides, not deletes.
+    for (const key of run.body.issues) {
+      const row = tracker.db.get<{ id: number }>('SELECT id FROM issues WHERE key = ?', [key]);
+      const issue = await get(`/api/issues/${row?.id}`);
+      assert.equal(issue.status, 200, 'an archived issue is still fetchable');
+    }
+  });
+
+  it('is idempotent — a second run archives nothing new', async () => {
+    const second = await post(API.archive.run, { projectId: archProject });
+    assert.equal(second.status, 200);
+    assert.equal(
+      second.body.archived,
+      0,
+      'a second run over the same policy must not archive anything again',
+    );
+  });
+
+  it('refuses to list candidates or run without permission', async () => {
+    const user = await post(API.users.create, {
+      username: 'archoutsider',
+      email: 'archoutsider@example.com',
+      displayName: 'Arch Outsider',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'archoutsider', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const read = await fetch(`${baseUrl}${API.archive.candidates}?projectId=${archProject}`, {
+      headers: { cookie: cookie as string },
+    });
+    assert.equal(read.status, 403, 'candidates must not leak to a non-member');
+
+    const run = await fetch(`${baseUrl}${API.archive.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: cookie as string },
+      body: JSON.stringify({ projectId: archProject }),
+    });
+    assert.equal(run.status, 403, 'a non-member must not trigger an archive run');
+  });
+});
+
 describe('data export over HTTP', () => {
   let expProject = 0;
   let expIds: number[] = [];

@@ -120,6 +120,9 @@ export function AppShell({ projectId }: { projectId: ProjectId | null }): JSX.El
               <SideLink to={`${base}/duplicates`} disabled={base === ''}>
                 Duplicates
               </SideLink>
+              <SideLink to={`${base}/archive`} disabled={base === ''}>
+                Archiving
+              </SideLink>
               <SideLink to={`${base}/dashboards`} disabled={base === ''}>
                 Dashboards
               </SideLink>
