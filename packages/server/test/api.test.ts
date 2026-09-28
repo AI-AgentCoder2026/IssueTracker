@@ -746,6 +746,180 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('SLA endpoints over HTTP', () => {
+  let slaProject = 0;
+  let policyId = 0;
+  let watchedId = 0;
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'SLA', name: 'SLA' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    slaProject = created.body.project.id;
+
+    const policy = await post(API.sla.createPolicy, {
+      projectId: slaProject,
+      name: 'Support',
+      description: 'first response',
+      appliesTo: { types: [], priorities: [], states: [], labelIds: [] },
+      responseMinutes: 60,
+      // A resolution target too, so the settle case below has a clock that
+      // resolution actually ends. A response clock is met by a first comment,
+      // not by closing the issue.
+      resolutionMinutes: 1440,
+      warningMinutes: 30,
+      enabled: true,
+    });
+    assert.equal(policy.status, 201, `policy create failed: ${JSON.stringify(policy.body)}`);
+    // The route answers with the policy itself, not a `{ policy }` envelope.
+    policyId = policy.body.id;
+
+    const issue = await post(API.issues.create, { projectId: slaProject, title: 'needs a reply' });
+    assert.equal(issue.status, 200, `issue create failed: ${JSON.stringify(issue.body)}`);
+    watchedId = issue.body.issue.id;
+  });
+
+  it('lists the project policy', async () => {
+    const response = await get(`${API.sla.policies}?projectId=${slaProject}`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(response.body.policies.some((p: { id: number }) => p.id === policyId));
+  });
+
+  it('reports a clock for an issue the policy applies to', async () => {
+    const response = await get(`/api/issues/${watchedId}/sla`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(response.body.clocks.length > 0, 'an open issue under a policy has a running clock');
+
+    const clock = response.body.clocks[0];
+    assert.equal(clock.issueId, watchedId);
+    assert.equal(typeof clock.state, 'string');
+    assert.ok(clock.startsAt, 'a clock says when it started');
+    assert.ok(clock.dueAt, 'an unmet clock has a deadline');
+  });
+
+  it('does not invent a clock for an issue no policy covers', async () => {
+    const other = await post(API.projects.create, { key: 'SLA2', name: 'SLA 2' });
+    assert.equal(other.status, 200);
+    const issue = await post(API.issues.create, {
+      projectId: other.body.project.id,
+      title: 'uncovered',
+    });
+    assert.equal(issue.status, 200);
+    const response = await get(`/api/issues/${issue.body.issue.id}/sla`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.clocks, [], 'no policy applies, so there is no clock');
+  });
+
+  it('settles a clock once the work happens, so it cannot report a false breach', async () => {
+    // The clock was created while the issue was open. Resolving the issue
+    // afterwards must not leave a clock still running towards a deadline it
+    // will now "breach".
+    const issue = await post(API.issues.create, { projectId: slaProject, title: 'resolved late' });
+    assert.equal(issue.status, 200);
+    const id = issue.body.issue.id;
+
+    const before = await get(`/api/issues/${id}/sla`);
+    assert.ok(before.body.clocks.length > 0, 'precondition: a clock is running');
+
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    tracker.db.run('UPDATE issues SET resolved_at = ?, closed_at = ? WHERE id = ?', [past, past, id]);
+
+    const after = await get(`/api/issues/${id}/sla`);
+    const resolution = after.body.clocks.find((c: { target: string }) => c.target === 'resolution');
+    assert.ok(resolution, 'precondition: the policy sets a resolution target');
+    assert.notEqual(resolution.state, 'breached', 'a resolved issue must not read as breached');
+    assert.ok(resolution.metAt !== null, 'resolution meets the resolution clock');
+  });
+
+  it('scopes a project request to that project, not the whole instance', async () => {
+    // An instance admin can see every project, so a request naming one project
+    // must still be limited to it. The route reads a plural `projectIds`; a
+    // singular `projectId` was ignored, which turned "this project" into
+    // "everything" without any visible difference in the response shape.
+    const elsewhere = await post(API.projects.create, { key: 'SLA9', name: 'SLA 9' });
+    assert.equal(elsewhere.status, 200);
+    const policy = await post(API.sla.createPolicy, {
+      projectId: elsewhere.body.project.id,
+      name: 'Elsewhere',
+      description: '',
+      responseMinutes: 30,
+      resolutionMinutes: null,
+      enabled: true,
+    });
+    assert.equal(policy.status, 201);
+    const otherIssue = await post(API.issues.create, {
+      projectId: elsewhere.body.project.id,
+      title: 'over there',
+    });
+    assert.equal(otherIssue.status, 200);
+
+    const scoped = await get(`${API.sla.atRisk}?projectId=${slaProject}&windowMs=${7 * 86_400_000}`);
+    assert.equal(scoped.status, 200, JSON.stringify(scoped.body));
+    const otherIssueId = otherIssue.body.issue.id;
+    assert.ok(
+      !scoped.body.clocks.some((c: { issueId: number }) => c.issueId === otherIssueId),
+      'naming one project must not return another project’s clocks',
+    );
+
+    const breaches = await get(`${API.sla.breached}?projectId=${slaProject}`);
+    assert.ok(
+      !breaches.body.clocks.some((c: { issueId: number }) => c.issueId === otherIssueId),
+      'the breached list is scoped the same way',
+    );
+  });
+
+  it('lists at-risk and breached clocks for a project', async () => {
+    const atRisk = await get(`${API.sla.atRisk}?projectId=${slaProject}&windowMs=${7 * 86_400_000}`);
+    assert.equal(atRisk.status, 200, JSON.stringify(atRisk.body));
+    assert.ok(Array.isArray(atRisk.body.clocks));
+
+    const breached = await get(`${API.sla.breached}?projectId=${slaProject}`);
+    assert.equal(breached.status, 200, JSON.stringify(breached.body));
+    assert.ok(Array.isArray(breached.body.clocks));
+    for (const clock of breached.body.clocks) {
+      assert.equal(clock.breached, true, 'everything in the breached list really is breached');
+    }
+  });
+
+  it('refuses SLA data for a project the caller cannot read', async () => {
+    const user = await post(API.users.create, {
+      username: 'slaoutsider',
+      email: 'slaoutsider@example.com',
+      displayName: 'SLA Outsider',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'slaoutsider', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    for (const path of [
+      `${API.sla.policies}?projectId=${slaProject}`,
+      `/api/issues/${watchedId}/sla`,
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: cookie as string } });
+      assert.equal(response.status, 403, `${path} must not be readable by a non-member`);
+    }
+
+    // The at-risk and breached lists are a different shape: they fall back to
+    // "every project this caller can see", which for a non-member is none. The
+    // requirement is that nothing leaks, not that the status is uniform.
+    for (const path of [
+      `${API.sla.atRisk}?projectId=${slaProject}&windowMs=${7 * 86_400_000}`,
+      `${API.sla.breached}?projectId=${slaProject}`,
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: cookie as string } });
+      assert.equal(response.status, 403, `${path} names a project the caller is not in`);
+      const body = await response.json().catch(() => ({ clocks: [] }));
+      assert.deepEqual(body.clocks ?? [], [], `${path} must return no clocks`);
+    }
+  });
+});
+
 describe('stale-issue archiving over HTTP', () => {
   let archProject = 0;
   let staleKey = '';

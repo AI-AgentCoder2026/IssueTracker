@@ -43,6 +43,7 @@ import { RichTextEditor } from '../components/RichTextEditor';
 import { Field, Select } from '../components/Select';
 import { Skeleton, SkeletonRows } from '../components/Skeleton';
 import { Timeline, TimingStrip } from '../components/Timeline';
+import { IssueSlaPanel } from '../components/IssueSlaPanel';
 import { useToast } from '../components/Toast';
 
 export function IssueDetail(): JSX.Element {
@@ -277,6 +278,7 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
       </div>
 
       <TimingStrip timeline={timelineQuery.data} />
+      <IssueSlaPanel />
 
       <div className="issue-layout">
         <div className="stack">

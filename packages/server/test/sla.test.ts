@@ -111,13 +111,35 @@ describe('policy and clock creation', () => {
 
   it('creates a clock for a matching issue', async () => {
     const issue = await newIssue();
-    const created = harness.services.sla.ensureClocksForIssue(issue);
-    assert.equal(created, 2, 'a response and a resolution clock');
 
+    // Creating the issue is enough: `IssueService.create` ensures clocks, so a
+    // response target is measured from the moment the issue was raised rather
+    // than from its first edit. That is the whole point of a response SLA.
     const statuses = await harness.services.sla.statusForIssue(issue);
     assert.equal(statuses.length, 2);
     assert.ok(statuses.some((s) => s.target === 'response'));
     assert.ok(statuses.some((s) => s.target === 'resolution'));
+    for (const status of statuses) {
+      assert.ok(status.startsAt, 'a clock records when it started');
+      assert.equal(status.metAt, null, 'a brand new issue has not met anything yet');
+    }
+  });
+
+  it('is idempotent — re-ensuring creates nothing and does not restart a clock', async () => {
+    const issue = await newIssue();
+    const before = await harness.services.sla.statusForIssue(issue);
+    assert.equal(before.length, 2, 'precondition: the clocks exist');
+
+    const created = harness.services.sla.ensureClocksForIssue(issue);
+    assert.equal(created, 0, 'the unique constraint makes a repeat call a no-op');
+
+    const after = await harness.services.sla.statusForIssue(issue);
+    assert.equal(after.length, 2);
+    assert.deepEqual(
+      after.map((s) => s.startsAt).sort(),
+      before.map((s) => s.startsAt).sort(),
+      'a repeated ensure must not restart a running clock',
+    );
   });
 
   it('does not duplicate clocks on a second call', async () => {

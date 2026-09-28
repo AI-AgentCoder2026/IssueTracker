@@ -16,6 +16,7 @@ import { Login } from './pages/Login';
 import { NewIssue } from './pages/NewIssue';
 import { Notifications } from './pages/Notifications';
 import { Projects } from './pages/Projects';
+import { ProjectSla } from './pages/ProjectSla';
 import { Settings, SettingsGeneral, SettingsLabels } from './pages/Settings';
 import { SettingsGitLab } from './pages/SettingsGitLab';
 import { AccountSettings } from './pages/AccountSettings';
@@ -112,6 +113,7 @@ export function App(): JSX.Element {
                 <Route path="issues/:issueId" element={<IssueDetail />} />
                 <Route path="duplicates" element={<Duplicates />} />
                 <Route path="archive" element={<ArchiveSettings />} />
+                <Route path="sla" element={<ProjectSla />} />
                 <Route path="dashboards" element={<Dashboard />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />}>

@@ -1164,6 +1164,73 @@ export const archiveApi = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// SLA
+// ---------------------------------------------------------------------------
+
+export type SlaClockState = 'not_started' | 'on_track' | 'at_risk' | 'breached' | 'met';
+
+export interface SlaStatus {
+  policyId: number;
+  issueId: number;
+  target: string;
+  startsAt: string;
+  /** Null once the clock is met. */
+  dueAt: string | null;
+  /** Negative once breached. */
+  remainingMs: number | null;
+  metAt: string | null;
+  breached: boolean;
+  state: SlaClockState;
+}
+
+function toSlaStatus(value: unknown): SlaStatus {
+  const r = asRecord(value);
+  const remaining = r.remainingMs;
+  const met = r.metAt;
+  return {
+    policyId: num(r.policyId),
+    issueId: num(r.issueId),
+    target: str(r.target),
+    startsAt: str(r.startsAt),
+    dueAt: strOrNull(r.dueAt),
+    // Zero is a real reading — a clock due exactly now — so it must not
+    // collapse to null the way a missing value does.
+    remainingMs: remaining === null || remaining === undefined ? null : num(remaining),
+    metAt: met === null || met === undefined ? null : String(met),
+    breached: bool(r.breached),
+    state: str(r.state, 'not_started') as SlaClockState,
+  };
+}
+
+export const slaApi = {
+  async forIssue(issueId: IssueId, signal?: AbortSignal): Promise<SlaStatus[]> {
+    const raw = await http.get<unknown>(fill(API.sla.forIssue, { issueId }), {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(unwrap(raw), 'clocks').map(toSlaStatus);
+  },
+
+  async atRisk(
+    projectId: ProjectId,
+    windowMs: number,
+    signal?: AbortSignal,
+  ): Promise<SlaStatus[]> {
+    const raw = await http.get<unknown>(
+      `${API.sla.atRisk}?projectId=${projectId}&windowMs=${windowMs}`,
+      { ...(signal !== undefined ? { signal } : {}) },
+    );
+    return asArray(unwrap(raw), 'clocks').map(toSlaStatus);
+  },
+
+  async breached(projectId: ProjectId, signal?: AbortSignal): Promise<SlaStatus[]> {
+    const raw = await http.get<unknown>(`${API.sla.breached}?projectId=${projectId}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(unwrap(raw), 'clocks').map(toSlaStatus);
+  },
+};
+
 export const exportApi = {
   /**
    * Downloads an export. Returns the blob and the filename the server chose

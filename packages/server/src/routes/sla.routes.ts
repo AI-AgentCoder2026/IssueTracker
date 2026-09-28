@@ -56,15 +56,28 @@ function allowPolicyWrite(ctx: RequestContext, projectId: number | null): void {
 
 /** `?projectIds=1,2,3`, or every project the actor may read when omitted. */
 function resolveProjectIds(ctx: RequestContext, request: FastifyRequest): number[] {
-  const raw = query(request)['projectIds'];
-  const requested =
-    typeof raw === 'string'
-      ? raw
-          .split(',')
-          .map((entry) => entry.trim())
-          .filter((entry) => entry !== '')
-          .map((entry) => parseId(entry, 'project'))
-      : [];
+  const bag = query(request);
+  const requested: number[] = [];
+
+  // Both spellings are accepted. The plural list has always been read here, but
+  // every sibling route in this API takes a singular `projectId` — and a
+  // request carrying one was silently ignored, falling through to "every
+  // project the caller can see". For an instance admin that turned
+  // "this project's SLA" into the whole instance's.
+  const single = bag['projectId'];
+  if (single !== undefined && single !== null && single !== '') {
+    requested.push(parseId(single, 'project'));
+  }
+  const many = bag['projectIds'];
+  if (typeof many === 'string') {
+    for (const entry of many
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value !== '')) {
+      const id = parseId(entry, 'project');
+      if (!requested.includes(id)) requested.push(id);
+    }
+  }
 
   if (requested.length === 0) return ctx.services.sla.projectIdsFor(ctx.actor);
   for (const projectId of requested) allow(ctx, 'dashboard.read', projectId);

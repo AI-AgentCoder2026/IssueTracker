@@ -189,7 +189,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Data export | ✅ | JSON, RFC-4180 CSV, Markdown. Reachable from the issue list toolbar; exports the current selection if there is one, otherwise the current filters. |
 | Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking. Branch *rules* themselves are API-only. |
 | Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid, per-role visibility |
-| SLA breach countdown timers | ⚠️ | Response + resolution clocks, business-hours aware. **Partly API-only**: the issue page shows the timing strip, but the per-issue SLA clock, the at-risk list and policy management have no screen. |
+| SLA breach countdown timers | ✅ | Response + resolution clocks, business-hours aware, with a live countdown on the issue page and a project triage view at `/sla` (breached and at-risk, worst first). |
 | Live webhook message broadcasting | ⚠️ | Signed outbound deliveries, retries, auto-disable — all working and tested. **No configuration screen**; webhooks are managed by API alone. |
 
 ---

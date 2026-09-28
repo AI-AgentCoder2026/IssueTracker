@@ -278,6 +278,13 @@ export class IssueService {
       duplicateCandidates = [];
     }
 
+    // SLA clocks start at creation. A response target measures time from the
+    // moment the issue was raised, so an issue nobody touches — exactly the
+    // case an SLA exists to catch — must still get its clock here. Without this
+    // the first clock only appeared on the first *edit*, because `refreshSla`
+    // is otherwise called from update, transition and time logging.
+    this.refreshSla(issueId, actorId);
+
     return { issue, duplicateCandidates };
   }
 
