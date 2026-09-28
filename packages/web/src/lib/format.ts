@@ -32,7 +32,11 @@ export function formatDuration(ms: number | null | undefined): string {
 export function formatSignedDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return '—';
   if (ms === 0) return '0m';
-  return `${ms < 0 ? '-' : '+'}${formatDuration(ms)}`;
+  const sign = ms < 0 ? '-' : '+';
+  // `formatDuration` collapses anything under a minute to "<1m", which reads
+  // as broken the moment a sign is attached ("-<1m"). A signed sub-minute delta
+  // is zero to the minute it is displayed in, so show that.
+  return `${sign}${Math.abs(ms) < MINUTE ? '0m' : formatDuration(Math.abs(ms))}`;
 }
 
 export function formatHours(hours: number | null | undefined): string {
@@ -82,7 +86,9 @@ export function formatRelative(iso: string | null | undefined, now = Date.now())
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
   const delta = then - now;
-  const past = delta < 0;
+  // An exactly-equal instant is "just now", not "in a moment": anything
+  // timestamped to the same millisecond has already happened.
+  const past = delta <= 0;
   const abs = Math.abs(delta);
   const phrase = relativePhrase(abs, past);
   return phrase ?? formatDateTime(iso);
@@ -139,7 +145,12 @@ export function initialsOf(name: string): string {
 /** Renders an arbitrary `unknown` cell value from a dashboard table. */
 export function formatCellValue(value: unknown): string {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  if (typeof value === 'number') {
+    // A widget averaging over an empty set yields NaN, and a cell reading
+    // "NaN" looks like a fault in the tracker rather than in the data.
+    if (!Number.isFinite(value)) return '—';
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map((v) => formatCellValue(v)).join(', ');

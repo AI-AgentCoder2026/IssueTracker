@@ -244,7 +244,7 @@ npm start            # API serves the built SPA from a single process
 Other commands:
 
 ```bash
-npm test             # server test suite
+npm test             # server + client test suites
 npm run typecheck    # strict typecheck across all workspaces
 npm run migrate -- status   # show applied and pending migrations
 ```
@@ -490,10 +490,14 @@ packages/server/test/
 ├── services.test.ts       guest tokens, API tokens, session lifecycle
 ├── project.test.ts        creation, membership, labels, milestones, stats
 └── api.test.ts            end-to-end over HTTP
+
+packages/web/src/
+└── lib/format.test.ts     duration, date, size and table-cell rendering
 ```
 
-Every test gets its own in-memory database, so suites are isolated and can run
-concurrently. CI runs `typecheck`, `test` and a production `build`.
+Every server test gets its own in-memory database, so suites are isolated and
+can run concurrently. CI runs `typecheck`, both test suites and a production
+`build`.
 
 ### Contributor rules
 

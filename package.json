@@ -21,7 +21,7 @@
     "start": "npm run start --workspace @tracker/server",
     "migrate": "npm run migrate --workspace @tracker/server",
     "seed": "npm run seed --workspace @tracker/server",
-    "test": "npm run test --workspace @tracker/server",
+    "test": "npm run test --workspace @tracker/server && npm run test --workspace @tracker/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run typecheck"
   },

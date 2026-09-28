@@ -36,11 +36,16 @@ jobs:
       - name: Typecheck the web client
         run: npm run typecheck --workspace @tracker/web
 
-      - name: Run the test suite
-        run: npm test
+      - name: Run the server test suite
+        run: npm run test --workspace @tracker/server
         env:
           NODE_ENV: test
           ENABLE_SCHEDULER: 'false'
+
+      - name: Run the client test suite
+        run: npm run test --workspace @tracker/web
+        env:
+          NODE_ENV: test
 
       - name: Production build
         run: npm run build
