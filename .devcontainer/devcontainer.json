@@ -1,27 +1,34 @@
 {
   // A GitHub Codespace for this repository.
   //
-  // The image carries Node 24, which is what `node:sqlite` and the
-  // experimental type-stripping in the build need. The post-create step
-  // installs and builds, because the server and web workspaces import
-  // @tracker/shared from its dist directory and a fresh checkout has none --
-  // without this the codespace opens and immediately fails to typecheck.
+  // Image: Node 24, which is what `node:sqlite` and the type-stripping in the
+  // build need. The tag is `24-bookworm` and not `1-24-bookworm` -- the
+  // `1-<major>` naming pattern stops at `1-22`, and asking for a tag that does
+  // not exist makes the codespace fail to start on the image pull.
   //
-  // Port 4000 is the API, which also serves the built SPA, so forwarding it
-  // publishes the whole application in one URL.
+  // Deliberately minimal. No optional features and no editor extensions: each
+  // one is another thing that can fail before the codespace opens, and this
+  // repository needs none of them to run. In particular there is no ESLint
+  // extension because the project has no ESLint -- `npm run lint` is the
+  // typecheck.
   "name": "IssueTracker",
 
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
 
-  "features": {
-    // Git operations and a readable diff experience out of the box.
-    "ghcr.io/devcontainers/features/git:1": {}
-  },
+  // Installs and builds, because the server and web workspaces import
+  // @tracker/shared from its dist directory and a fresh checkout has none.
+  // Without this the codespace opens and then fails to typecheck with
+  // `Cannot find module '@tracker/shared'`.
+  "postCreateCommand": "npm ci && npm run build",
 
+  // Port 4000 is the API, which also serves the built client, so forwarding
+  // this one port publishes the whole application.
   "forwardPorts": [4000],
 
-  // Public preview URLs are HTTP, so the port is left on HTTP deliberately;
-  // forcing HTTPS makes GitHub downgrade the port to private-only.
+  // A public preview URL is HTTP. Switching the port to HTTPS makes GitHub
+  // downgrade it to private-only, so it is left on HTTP deliberately; the
+  // session cookie is only marked Secure for an https PUBLIC_URL, so sign-in
+  // works over the preview link without extra configuration.
   "portsAttributes": {
     "4000": {
       "label": "IssueTracker (API + web)",
@@ -29,22 +36,13 @@
     }
   },
 
-  "postCreateCommand": "npm ci && npm run build",
-
   "customizations": {
     "vscode": {
-      "extensions": [
-        // The project has no linter of its own; `npm run lint` is the
-        // typecheck, so the built-in checker is the useful one here.
-        "dbaeumer.vscode-eslint"
-      ],
       "settings": {
         "typescript.tsdk": "node_modules/typescript/lib"
       }
     }
   },
 
-  // The container is the whole app; there is nothing to attach a debugger to
-  // on the client side, and the server runs from dist.
   "remoteUser": "node"
 }
