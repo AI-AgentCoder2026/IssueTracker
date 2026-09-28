@@ -67,6 +67,14 @@ export interface TrackerApp {
   db: Database;
   services: Services;
   scheduler: Scheduler;
+  /**
+   * Whether the built SPA is being served from this process.
+   *
+   * Exposed rather than probed with `app.hasRoute`: the shell is delivered by
+   * the not-found fallback, not by a registered route, so a route probe
+   * reports `false` even when the client is being served perfectly well.
+   */
+  servesWebClient: boolean;
   close(): Promise<void>;
 }
 
@@ -313,6 +321,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<TrackerAp
     db,
     services,
     scheduler,
+    servesWebClient: hasWebClient,
     async close() {
       await app.close();
       if (!options.db) db.close();

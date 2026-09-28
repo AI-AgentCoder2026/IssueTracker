@@ -43,8 +43,10 @@ async function main(): Promise<void> {
       'issue tracker listening',
     );
 
-    const hasClient = tracker.app.hasRoute({ method: 'GET', url: '/' });
-    if (hasClient) {
+    // Ask the app, not the router. The SPA shell is served by the not-found
+    // fallback, so `hasRoute({ url: '/' })` reports false even when the client
+    // is being served — which made this line claim otherwise.
+    if (tracker.servesWebClient) {
       tracker.app.log.info({ url: address }, 'web client is being served from this process');
     } else {
       tracker.app.log.info(
