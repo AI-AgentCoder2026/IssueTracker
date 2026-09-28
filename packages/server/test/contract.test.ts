@@ -25,13 +25,6 @@ const routeDir = join(serverRoot, 'src', 'routes');
 const KNOWN_GAPS: Record<string, string> = {
   'projects.roles':
     'No list-the-roles endpoint. The role catalogue is implicit; the SPA has no role editor.',
-  'workflow.statuses': 'Per-status CRUD is not routed; the whole workflow is PUT as one document.',
-  'workflow.createStatus': 'See workflow.statuses.',
-  'workflow.updateStatus': 'See workflow.statuses.',
-  'workflow.removeStatus': 'See workflow.statuses.',
-  'workflow.transitions': 'Per-transition CRUD is not routed; the whole workflow is PUT as one document.',
-  'workflow.createTransition': 'See workflow.transitions.',
-  'workflow.removeTransition': 'See workflow.transitions.',
   'dashboards.widgets': 'Widgets are returned embedded in the dashboard; there is no separate list route.',
   'admin.users': 'No instance-wide user list for administrators. /api/users requires a project context.',
   'admin.settings': 'No instance settings route; configuration is environment-driven.',

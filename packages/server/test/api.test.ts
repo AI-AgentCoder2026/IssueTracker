@@ -9,6 +9,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { API } from '@tracker/shared';
 import { buildApp, type TrackerApp } from '../src/app.ts';
 import { Database } from '../src/db/connection.ts';
 import { migrate } from '../src/db/migrate.ts';
@@ -610,5 +611,128 @@ describe('version-control linkage over HTTP', () => {
     const response = await call('DELETE', `/api/issues/${issueId}/references/${referenceId}`);
     assert.equal(response.status, 200);
     assert.equal((await get(`/api/issues/${issueId}/references`)).body.references.length, 0);
+  });
+});
+
+/**
+ * The single-entity workflow routes, over HTTP.
+ *
+ * `contract.test.ts` proves these paths are registered and `workflow.test.ts`
+ * proves the service behaves; what only a real request can show is the wiring
+ * between them -- path parameters, shared-schema validation, and the status
+ * codes a client actually branches on.
+ */
+describe('workflow editing endpoints', () => {
+  const base = (suffix: string) => `/api/projects/${projectId}/workflow${suffix}`;
+
+  const newStatus = (over: Record<string, unknown> = {}) => ({
+    key: 'triage',
+    name: 'Triage',
+    state: 'open',
+    color: '#123456',
+    description: '',
+    position: 0,
+    isResolution: false,
+    isClosed: false,
+    isDone: false,
+    wipLimit: null,
+    ...over,
+  });
+
+  it('lists the statuses of a project', async () => {
+    const response = await get(base('/statuses'));
+    assert.equal(response.status, 200);
+    assert.ok(response.body.statuses.length > 0, 'a provisioned workflow has statuses');
+    assert.ok(response.body.statuses.some((s: { key: string }) => s.key === 'open'));
+  });
+
+  it('adds, patches and removes a single status', async () => {
+    const created = await post(base('/statuses'), newStatus());
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    assert.equal(created.body.status.key, 'triage');
+    // The category is derived from the state when the caller omits it.
+    assert.equal(created.body.status.category, 'unstarted');
+
+    const patched = await patch(
+      base(`/statuses/${created.body.status.id}`),
+      { name: 'Needs triage' },
+    );
+    assert.equal(patched.status, 200);
+    assert.equal(patched.body.status.name, 'Needs triage');
+    assert.equal(patched.body.status.key, 'triage', 'the key must not move on rename');
+
+    const removed = await call('DELETE', base(`/statuses/${created.body.status.id}`));
+    assert.equal(removed.status, 200);
+    assert.equal(removed.body.removed, true);
+
+    const again = await call('DELETE', base(`/statuses/${created.body.status.id}`));
+    assert.equal(again.status, 404, 'removing it twice is not a silent success');
+  });
+
+  it('reports a duplicate status key as a conflict', async () => {
+    assert.equal((await post(base('/statuses'), newStatus())).status, 200);
+    const duplicate = await post(base('/statuses'), newStatus());
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.body.error.code, 'conflict');
+  });
+
+  it('rejects a malformed status body with a validation error', async () => {
+    const response = await post(base('/statuses'), { key: 'Bad Key', name: '' });
+    assert.equal(response.status, 422, 'the shared schema is the only validator');
+    assert.equal(response.body.error.code, 'validation_failed');
+  });
+
+  it('lists, adds and removes a transition', async () => {
+    const statuses = (await get(base('/statuses'))).body.statuses;
+    const backlog = statuses.find((s: { key: string }) => s.key === 'backlog');
+    const inProgress = statuses.find((s: { key: string }) => s.key === 'in_progress');
+    assert.ok(backlog && inProgress);
+
+    const created = await post(base('/transitions'), {
+      fromStatusId: backlog.id,
+      toStatusId: inProgress.id,
+      name: 'Skip triage',
+      description: '',
+      requiredPermission: null,
+    });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const transitionId = created.body.transition.id;
+
+    const listed = await get(base('/transitions'));
+    assert.ok(listed.body.transitions.some((t: { id: number }) => t.id === transitionId));
+
+    const removed = await call('DELETE', base(`/transitions/${transitionId}`));
+    assert.equal(removed.status, 200);
+    assert.equal(
+      (await get(base('/transitions'))).body.transitions.some((t: { id: number }) => t.id === transitionId),
+      false,
+    );
+  });
+
+  it('refuses a status id from another project', async () => {
+    const other = await post(API.projects.create, { key: 'E2E2', name: 'Other' });
+    assert.equal(other.status, 200);
+    const otherStatuses = await get(`/api/projects/${other.body.project.id}/workflow/statuses`);
+    const foreign = otherStatuses.body.statuses[0];
+
+    const response = await patch(`/api/projects/${other.body.project.id}/workflow/statuses/${foreign.id}`, {
+      name: 'hijacked',
+    });
+    assert.equal(response.status, 200, 'a project may edit its own status');
+
+    // The same id addressed through the *first* project must not resolve.
+    const crossProject = await patch(base(`/statuses/${foreign.id}`), { name: 'hijacked' });
+    assert.equal(crossProject.status, 404, 'a status id is not global');
+  });
+
+  it('requires authentication', async () => {
+    const saved = sessionCookie;
+    sessionCookie = '';
+    try {
+      const response = await get(base('/statuses'));
+      assert.equal(response.status, 401);
+    } finally {
+      sessionCookie = saved;
+    }
   });
 });

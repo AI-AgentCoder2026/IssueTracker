@@ -384,3 +384,218 @@ describe('workflow customisation', () => {
     }
   });
 });
+
+describe('single-entity workflow editing', () => {
+  // Each case gets its own project so a status added in one cannot satisfy the
+  // uniqueness precondition of another.
+  let seq = 0;
+  const freshProject = (): number => createProject(harness, userId, `CRUD${(seq += 1)}`);
+  const actor = { actorId: userId };
+
+  const newStatus = (over: Record<string, unknown> = {}) => ({
+    key: 'triage',
+    name: 'Triage',
+    state: 'open' as const,
+    color: '#123456',
+    description: '',
+    position: 9,
+    isResolution: false,
+    isClosed: false,
+    isDone: false,
+    wipLimit: null,
+    ...over,
+  });
+
+  it('adds one status without touching the rest', () => {
+    const proj = freshProject();
+    const before = harness.services.workflow.statusesForProject(proj).length;
+    const created = harness.services.workflow.createStatus(proj, newStatus() as never, actor);
+    assert.equal(created.key, 'triage');
+    assert.equal(harness.services.workflow.statusesForProject(proj).length, before + 1);
+    // The category is derived from the state when the caller omits it.
+    assert.equal(created.category, 'unstarted');
+  });
+
+  it('refuses a duplicate status key in the same project', () => {
+    const proj = freshProject();
+    harness.services.workflow.createStatus(proj, newStatus() as never, actor);
+    assert.throws(
+      () => harness.services.workflow.createStatus(proj, newStatus() as never, actor),
+      /already exists/i,
+    );
+  });
+
+  it('allows the same status key in a different project', () => {
+    const a = freshProject();
+    const b = freshProject();
+    harness.services.workflow.createStatus(a, newStatus() as never, actor);
+    assert.ok(harness.services.workflow.createStatus(b, newStatus() as never, actor));
+  });
+
+  it('patches one status and leaves the others alone', () => {
+    const proj = freshProject();
+    const created = harness.services.workflow.createStatus(proj, newStatus() as never, actor);
+    const others = harness.services.workflow.statusesForProject(proj).filter((s) => s.id !== created.id);
+
+    const updated = harness.services.workflow.updateStatus(
+      proj,
+      Number(created.id),
+      { name: 'Needs triage', color: '#654321' },
+      actor,
+    );
+    assert.equal(updated.name, 'Needs triage');
+    assert.equal(updated.color, '#654321');
+
+    for (const other of others) {
+      const still = harness.services.workflow.statusesForProject(proj).find((s) => s.id === other.id);
+      assert.equal(still?.name, other.name, 'patching one status must not rename another');
+    }
+  });
+
+  it('ignores a key rename rather than moving a referenced identifier', () => {
+    const proj = freshProject();
+    const created = harness.services.workflow.createStatus(proj, newStatus() as never, actor);
+    const updated = harness.services.workflow.updateStatus(
+      proj,
+      Number(created.id),
+      { key: 'renamed' } as never,
+      actor,
+    );
+    assert.equal(updated.key, 'triage', 'the key identifies the column and must not move');
+  });
+
+  it('refuses to remove a status that still has issues in it', async () => {
+    const proj = freshProject();
+    const created = harness.services.workflow.createStatus(proj, newStatus({ position: 0 }) as never, actor);
+    await harness.services.issues.create(
+      proj,
+      { title: 'sits in triage', description: '', type: 'task', priority: 'medium', statusId: Number(created.id) },
+      userId,
+      {},
+    );
+    assert.throws(
+      () => harness.services.workflow.removeStatus(proj, Number(created.id), actor),
+      /still use it/i,
+    );
+    assert.ok(
+      harness.services.workflow.statusesForProject(proj).some((s) => s.id === created.id),
+      'the status must survive a rejected removal',
+    );
+  });
+
+  it('removes an empty status and the transitions into it', () => {
+    const proj = freshProject();
+    const created = harness.services.workflow.createStatus(proj, newStatus() as never, actor);
+    const open = harness.services.workflow.statusesForProject(proj).find((s) => s.key === 'open');
+    assert.ok(open);
+    harness.services.workflow.createTransition(
+      proj,
+      {
+        fromStatusId: Number(open.id),
+        toStatusId: Number(created.id),
+        name: 'Triage it',
+        description: '',
+        requiredPermission: null,
+      },
+      actor,
+    );
+
+    harness.services.workflow.removeStatus(proj, Number(created.id), actor);
+    assert.ok(!harness.services.workflow.statusesForProject(proj).some((s) => s.id === created.id));
+    assert.ok(
+      !harness.services.workflow
+        .getForProject(proj)
+        .transitions.some((t) => Number(t.toStatusId) === Number(created.id)),
+      'transitions into a removed status must go with it',
+    );
+  });
+
+  it('will not touch a status belonging to another project', () => {
+    const mine = freshProject();
+    const theirs = freshProject();
+    const status = harness.services.workflow.createStatus(theirs, newStatus() as never, actor);
+    assert.throws(
+      () => harness.services.workflow.updateStatus(mine, Number(status.id), { name: 'hijack' }, actor),
+      /not found/i,
+    );
+    assert.throws(() => harness.services.workflow.removeStatus(mine, Number(status.id), actor), /not found/i);
+    assert.equal(
+      harness.services.workflow.statusesForProject(theirs).find((s) => s.id === status.id)?.name,
+      'Triage',
+    );
+  });
+
+  it('adds and removes a transition', () => {
+    const proj = freshProject();
+    const statuses = harness.services.workflow.statusesForProject(proj);
+    // The default workflow already contains open -> in_progress, so a pair that
+    // genuinely does not exist yet is used here.
+    const backlog = statuses.find((s) => s.key === 'backlog');
+    const inProgress = statuses.find((s) => s.key === 'in_progress');
+    assert.ok(backlog && inProgress);
+
+    const created = harness.services.workflow.createTransition(
+      proj,
+      {
+        fromStatusId: Number(backlog.id),
+        toStatusId: Number(inProgress.id),
+        name: 'Skip triage',
+        description: '',
+        requiredPermission: null,
+      },
+      actor,
+    );
+    assert.ok(Number(created.id) > 0);
+    assert.ok(harness.services.workflow.getForProject(proj).transitions.some((t) => t.id === created.id));
+
+    harness.services.workflow.removeTransition(proj, Number(created.id), actor);
+    assert.ok(!harness.services.workflow.getForProject(proj).transitions.some((t) => t.id === created.id));
+  });
+
+  it('refuses a transition whose endpoints belong to another project', () => {
+    const mine = freshProject();
+    const theirs = freshProject();
+    const myOpen = harness.services.workflow.statusesForProject(mine).find((s) => s.key === 'open');
+    const theirProgress = harness.services.workflow.statusesForProject(theirs).find((s) => s.key === 'in_progress');
+    assert.ok(myOpen && theirProgress);
+
+    assert.throws(
+      () =>
+        harness.services.workflow.createTransition(
+          mine,
+          {
+            fromStatusId: Number(myOpen.id),
+            toStatusId: Number(theirProgress.id),
+            name: 'Cross project',
+            description: '',
+            requiredPermission: null,
+          },
+          actor,
+        ),
+      /not found/i,
+      'a transition must not be able to point into another project',
+    );
+  });
+
+  it('refuses a duplicate transition between the same pair', () => {
+    const proj = freshProject();
+    const statuses = harness.services.workflow.statusesForProject(proj);
+    const backlog = statuses.find((s) => s.key === 'backlog');
+    const blocked = statuses.find((s) => s.key === 'blocked');
+    assert.ok(backlog && blocked);
+    const body = {
+      fromStatusId: Number(backlog.id),
+      toStatusId: Number(blocked.id),
+      name: 'Block early',
+      description: '',
+      requiredPermission: null,
+    };
+    harness.services.workflow.createTransition(proj, body, actor);
+    assert.throws(() => harness.services.workflow.createTransition(proj, body, actor), /already exists/i);
+  });
+
+  it('reports removing a transition that does not exist', () => {
+    const proj = freshProject();
+    assert.throws(() => harness.services.workflow.removeTransition(proj, 999_999, actor), /not found/i);
+  });
+});

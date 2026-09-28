@@ -3,6 +3,7 @@
  */
 
 import {
+  API,
   addMemberSchema,
   can,
   createLabelSchema,
@@ -11,6 +12,7 @@ import {
   createStatusSchema,
   createTransitionSchema,
   updateProjectSchema,
+  updateStatusSchema,
   type Role,
 } from '@tracker/shared';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -237,6 +239,90 @@ export const projectRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         { actorId: Number(ctx.actor.userId) },
       ),
     };
+  });
+
+  // -- workflow: single statuses -------------------------------------------
+  // The PUT above replaces the whole document, which is what the board editor
+  // wants. These are for adding or removing one column at a time, so a client
+  // does not have to read the entire workflow, merge, and write it back.
+
+  app.get(API.workflow.statuses, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.read', projectId);
+    return { statuses: ctx.services.workflow.statusesForProject(projectId) };
+  });
+
+  app.post(API.workflow.createStatus, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.manage', projectId);
+    const body = createStatusSchema.parse(request.body);
+    return {
+      status: ctx.services.workflow.createStatus(
+        projectId,
+        body,
+        { actorId: Number(ctx.actor.userId) },
+      ),
+    };
+  });
+
+  app.patch(API.workflow.updateStatus, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.manage', projectId);
+    const statusId = parseId((request.params as { id: string }).id, 'status');
+    return {
+      status: ctx.services.workflow.updateStatus(
+        projectId,
+        statusId,
+        updateStatusSchema.parse(request.body),
+        { actorId: Number(ctx.actor.userId) },
+      ),
+    };
+  });
+
+  app.delete(API.workflow.removeStatus, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.manage', projectId);
+    const statusId = parseId((request.params as { id: string }).id, 'status');
+    ctx.services.workflow.removeStatus(projectId, statusId, { actorId: Number(ctx.actor.userId) });
+    return { removed: true, statusId };
+  });
+
+  // -- workflow: transitions ------------------------------------------------
+
+  app.get(API.workflow.transitions, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.read', projectId);
+    return { transitions: ctx.services.workflow.getForProject(projectId).transitions };
+  });
+
+  app.post(API.workflow.createTransition, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.manage', projectId);
+    const body = createTransitionSchema.parse(request.body);
+    return {
+      transition: ctx.services.workflow.createTransition(
+        projectId,
+        body,
+        { actorId: Number(ctx.actor.userId) },
+      ),
+    };
+  });
+
+  app.delete(API.workflow.removeTransition, async (request) => {
+    const projectId = projectIdOf(request);
+    const ctx = requireAuth(request);
+    requirePermission(request, 'workflow.manage', projectId);
+    const transitionId = parseId((request.params as { id: string }).id, 'transition');
+    ctx.services.workflow.removeTransition(projectId, transitionId, {
+      actorId: Number(ctx.actor.userId),
+    });
+    return { removed: true, transitionId };
   });
 };
 

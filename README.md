@@ -536,12 +536,13 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 - **Instance settings are environment-driven only.** There is no
   `/api/admin/settings` route, so configuration is edited in the environment
   rather than from the product.
-- **10 declared contract entries have no route.** `@tracker/shared` promises
+- **5 declared contract entries have no route.** `@tracker/shared` promises
   more surface than the server implements. The list is asserted in
   `packages/server/test/contract.test.ts` as an explicit, commented allowlist
-  so the gap is tracked and new drift fails CI. The substantive ones are
-  per-status and per-transition workflow CRUD (the whole workflow is `PUT` as
-  one document instead), and an instance-wide admin user list.
+  so the gap is tracked and new drift fails CI. What remains is a role
+  catalogue endpoint, a separate dashboard-widget list (widgets already come
+  back embedded), an instance-wide admin user list, and instance settings,
+  which stay environment-driven.
 - The bundled SMTP client speaks only submission: it will not act as a
   receiving server, and it negotiates STARTTLS rather than exotic extensions.
   With no `SMTP_*` or `MAIL_WEBHOOK_URL` set, notifications stay in

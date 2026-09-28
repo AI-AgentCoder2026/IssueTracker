@@ -25,7 +25,7 @@ import {
   type WorkflowTransition,
   isDefaultStatusKey,
 } from '@tracker/shared';
-import { forbidden, notFound, workflowViolation } from '../errors.ts';
+import { conflict, forbidden, notFound, workflowViolation } from '../errors.ts';
 import type { Database, SqlParam } from '../db/connection.ts';
 import { nowIso } from '../lib/time.ts';
 import type { Services } from './context.ts';
@@ -478,7 +478,137 @@ export class WorkflowService {
     return after;
   }
 
-  /** Category for a state, used when a client posts a raw state value. */
+  // -------------------------------------------------------------------------
+  // Single-entity editing
+  //
+  // These exist so a client can add one status or one transition without
+  // posting the entire workflow back. They deliberately do not reimplement
+  // anything: each builds a one-item change set and delegates to `update`, so
+  // the "status still in use" guard, category derivation, the audit entry and
+  // the board broadcast all stay in exactly one place.
+  // -------------------------------------------------------------------------
+
+  /** Add one status to a project's workflow. */
+  createStatus(projectId: number, input: CreateStatusInput, ctx: { actorId: number | null }): WorkflowStatus {
+    const before = this.getForProject(projectId);
+    if (before.statuses.some((status) => status.key === input.key)) {
+      throw conflict(`A status with the key "${input.key}" already exists`, { key: input.key });
+    }
+
+    const after = this.update(
+      projectId,
+      { statuses: [input], transitions: [], removedStatusIds: [], removedTransitionIds: [], updatedStatuses: [] },
+      ctx,
+    );
+    const created = after.statuses.find((status) => status.key === input.key);
+    if (!created) throw notFound('Workflow status', input.key);
+    return created;
+  }
+
+  /** Patch one status. `key` is immutable, so it is ignored rather than moved. */
+  updateStatus(
+    projectId: number,
+    statusId: number,
+    patch: Partial<CreateStatusInput>,
+    ctx: { actorId: number | null },
+  ): WorkflowStatus {
+    this.assertStatusInProject(projectId, statusId);
+    // A status key is referenced by saved filters and by the board, so moving
+    // it would silently repoint all of them.
+    const { key: _ignoredKey, ...safe } = patch;
+
+    this.update(
+      projectId,
+      { statuses: [], transitions: [], removedStatusIds: [], removedTransitionIds: [], updatedStatuses: [{ id: statusId, patch: safe }] },
+      ctx,
+    );
+    return this.getForProject(projectId).statuses.find((status) => Number(status.id) === statusId) as WorkflowStatus;
+  }
+
+  /** Remove one status, refusing while issues still sit in it. */
+  removeStatus(projectId: number, statusId: number, ctx: { actorId: number | null }): void {
+    this.assertStatusInProject(projectId, statusId);
+    this.update(
+      projectId,
+      { statuses: [], transitions: [], removedStatusIds: [statusId], removedTransitionIds: [], updatedStatuses: [] },
+      ctx,
+    );
+  }
+
+  /** Add one transition. */
+  createTransition(
+    projectId: number,
+    input: CreateTransitionInput,
+    ctx: { actorId: number | null },
+  ): WorkflowTransition {
+    this.assertTransitionEndpoints(projectId, input.fromStatusId, input.toStatusId);
+    const before = this.getForProject(projectId);
+    if (
+      before.transitions.some(
+        (transition) =>
+          Number(transition.toStatusId) === input.toStatusId &&
+          (transition.fromStatusId === null
+            ? input.fromStatusId === null
+            : Number(transition.fromStatusId) === input.fromStatusId),
+      )
+    ) {
+      throw conflict('That transition already exists', {
+        fromStatusId: input.fromStatusId,
+        toStatusId: input.toStatusId,
+      });
+    }
+
+    const after = this.update(
+      projectId,
+      { statuses: [], transitions: [input], removedStatusIds: [], removedTransitionIds: [], updatedStatuses: [] },
+      ctx,
+    );
+    const created = after.transitions.find(
+      (transition) =>
+        Number(transition.toStatusId) === input.toStatusId &&
+        (transition.fromStatusId === null
+          ? input.fromStatusId === null
+          : Number(transition.fromStatusId) === input.fromStatusId),
+    );
+    if (!created) throw notFound('Workflow transition', input.toStatusId);
+    return created;
+  }
+
+  /** Remove one transition. */
+  removeTransition(projectId: number, transitionId: number, ctx: { actorId: number | null }): void {
+    const workflow = this.getForProject(projectId);
+    if (!workflow.transitions.some((transition) => Number(transition.id) === transitionId)) {
+      throw notFound('Workflow transition', transitionId);
+    }
+    this.update(
+      projectId,
+      { statuses: [], transitions: [], removedStatusIds: [], removedTransitionIds: [transitionId], updatedStatuses: [] },
+      ctx,
+    );
+  }
+
+  /** A status id must belong to this project, not merely exist. */
+  private assertStatusInProject(projectId: number, statusId: number): void {
+    const found = this.db.get<{ id: number }>(
+      'SELECT id FROM workflow_statuses WHERE id = ? AND project_id = ?',
+      [statusId, projectId],
+    );
+    if (!found) throw notFound('Workflow status', statusId);
+  }
+
+  /** Both ends of a transition must be statuses in this project's workflow. */
+  private assertTransitionEndpoints(
+    projectId: number,
+    fromStatusId: number | null,
+    toStatusId: number,
+  ): void {
+    this.assertStatusInProject(projectId, toStatusId);
+    if (fromStatusId !== null) this.assertStatusInProject(projectId, fromStatusId);
+  }
+
+  /**
+   * Category for a state, used when a client posts a raw state value.
+   */
   categoryForState(state: string): StatusCategory {
     switch (state) {
       case 'open':
