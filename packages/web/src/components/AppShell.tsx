@@ -126,6 +126,9 @@ export function AppShell({ projectId }: { projectId: ProjectId | null }): JSX.El
               <SideLink to={`${base}/sla`} disabled={base === ''}>
                 SLA
               </SideLink>
+              <SideLink to={`${base}/webhooks`} disabled={base === ''}>
+                Webhooks
+              </SideLink>
               <SideLink to={`${base}/dashboards`} disabled={base === ''}>
                 Dashboards
               </SideLink>

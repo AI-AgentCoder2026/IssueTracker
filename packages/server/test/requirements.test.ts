@@ -80,7 +80,6 @@ const MUST_REACH_FROM_UI: Record<string, string> = {
  * in the same commit, which is the point.
  */
 const NOT_YET_IN_UI: Record<string, string> = {
-  'webhooks.list': 'Webhook delivery, signing and retry all work; there is no configuration screen.',
   'users.create': 'User administration is API-only; the interface has no people or account screen.',
 };
 

@@ -9,7 +9,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { API } from '@tracker/shared';
+import { API, fill } from '@tracker/shared';
 import { buildApp, type TrackerApp } from '../src/app.ts';
 import { Database } from '../src/db/connection.ts';
 import { migrate } from '../src/db/migrate.ts';
@@ -743,6 +743,139 @@ describe('attachment upload over HTTP', () => {
       body: form,
     });
     assert.equal(response.status, 400, 'a multipart body must actually carry a file');
+  });
+});
+
+describe('outgoing webhooks over HTTP', () => {
+  let hookProject = 0;
+  let hookId = 0;
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'HOOK', name: 'Hooks' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    hookProject = created.body.project.id;
+  });
+
+  const createHook = async (
+    overrides: Record<string, unknown> = {},
+  ): Promise<{ status: number; body: any }> =>
+    post(fill(API.webhooks.create, { projectId: hookProject }), {
+      name: 'Deploy hook',
+      targetUrl: 'https://example.com/hook',
+      events: ['issue.created', 'ping'],
+      enabled: true,
+      ...overrides,
+    });
+
+  it('creates, lists, patches and deletes a webhook', async () => {
+    const created = await createHook();
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    hookId = created.body.webhook.id;
+    assert.equal(created.body.webhook.name, 'Deploy hook');
+    assert.deepEqual(created.body.webhook.events, ['issue.created', 'ping']);
+    // The signing secret is shown exactly once, at creation, so the receiver
+    // can be configured with it. It must never appear again.
+    assert.ok(created.body.webhook.secret, 'the secret is returned by the creating response');
+
+    const listed = await get(fill(API.webhooks.list, { projectId: hookProject }));
+    assert.equal(listed.status, 200);
+    const seen = listed.body.webhooks.find((w: { id: number }) => w.id === hookId);
+    assert.ok(seen, 'the webhook is listed');
+    assert.equal(seen.secret, undefined, 'the secret must not be readable after creation');
+
+    const patched = await call(
+      'PATCH',
+      fill(API.webhooks.update, { projectId: hookProject, id: hookId }),
+      { body: { name: 'Renamed hook', enabled: false } },
+    );
+    assert.equal(patched.status, 200, JSON.stringify(patched.body));
+    assert.equal(patched.body.webhook.name, 'Renamed hook');
+    assert.equal(patched.body.webhook.enabled, false);
+
+    const removed = await call(
+      'DELETE',
+      fill(API.webhooks.remove, { projectId: hookProject, id: hookId }),
+    );
+    assert.equal(removed.status, 200);
+    const after = await get(fill(API.webhooks.list, { projectId: hookProject }));
+    assert.ok(!after.body.webhooks.some((w: { id: number }) => w.id === hookId));
+  });
+
+  it('insists on https, and refuses a target that reaches the host', async () => {
+    const plain = await createHook({ targetUrl: 'http://example.com/hook', name: 'plain http' });
+    assert.equal(plain.status, 422, 'the schema requires https away from localhost');
+
+    // The schema permits http://localhost for development, but the SSRF guard
+    // is a separate layer and refuses it unless WEBHOOK_ALLOW_PRIVATE_TARGETS
+    // is set. Two defences, deliberately: passing the URL check is not the same
+    // as being allowed to send to it.
+    for (const targetUrl of [
+      'http://localhost:3000/hook',
+      'https://127.0.0.1/hook',
+      'https://localhost/hook',
+      'https://169.254.169.254/latest/meta-data',
+      'https://10.0.0.5/hook',
+    ]) {
+      const response = await createHook({ targetUrl, name: `internal ${targetUrl}` });
+      assert.equal(response.status, 400, `${targetUrl} must be refused by the SSRF guard`);
+    }
+  });
+
+  it('requires at least one event and a name', async () => {
+    assert.equal((await createHook({ events: [] })).status, 422);
+    assert.equal((await createHook({ name: '' })).status, 422);
+  });
+
+  it('rejects a patch that changes nothing', async () => {
+    const created = await createHook({ name: 'patch me' });
+    const id = created.body.webhook.id;
+    const empty = await call('PATCH', fill(API.webhooks.update, { projectId: hookProject, id }), {
+      body: {},
+    });
+    assert.equal(empty.status, 422, 'an empty patch is a client bug, not a no-op');
+    await call('DELETE', fill(API.webhooks.remove, { projectId: hookProject, id }));
+  });
+
+  it('records a failed test delivery rather than throwing', async () => {
+    // example.com is not reachable from a test run, which is the point: a test
+    // must report the failure, not blow up the request.
+    const created = await createHook({ name: 'test me' });
+    const id = created.body.webhook.id;
+    const tested = await post(fill(API.webhooks.test, { projectId: hookProject, id }), {});
+    assert.equal(tested.status, 200, JSON.stringify(tested.body));
+    assert.ok(tested.body.delivery, 'a test always produces a delivery row');
+    assert.ok(
+      tested.body.delivery.status !== 'succeeded',
+      'an unreachable endpoint must not be reported as a success',
+    );
+
+    const log = await get(fill(API.webhooks.deliveries, { projectId: hookProject, id }));
+    assert.equal(log.status, 200, JSON.stringify(log.body));
+    assert.ok(log.body.deliveries.length > 0, 'the attempt is recorded for inspection');
+    await call('DELETE', fill(API.webhooks.remove, { projectId: hookProject, id }));
+  });
+
+  it('refuses to read or change webhooks without permission', async () => {
+    const user = await post(API.users.create, {
+      username: 'hookoutsider',
+      email: 'hookoutsider@example.com',
+      displayName: 'Hook Outsider',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'hookoutsider', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const list = await fetch(`${baseUrl}${fill(API.webhooks.list, { projectId: hookProject })}`, {
+      headers: { cookie: cookie as string },
+    });
+    assert.equal(list.status, 403, 'webhook configuration must not leak to a non-member');
   });
 });
 

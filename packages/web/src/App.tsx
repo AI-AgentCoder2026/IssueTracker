@@ -15,6 +15,7 @@ import { IssueList } from './pages/IssueList';
 import { Login } from './pages/Login';
 import { NewIssue } from './pages/NewIssue';
 import { Notifications } from './pages/Notifications';
+import { WebhookSettings } from './pages/WebhookSettings';
 import { Projects } from './pages/Projects';
 import { ProjectSla } from './pages/ProjectSla';
 import { Settings, SettingsGeneral, SettingsLabels } from './pages/Settings';
@@ -114,6 +115,7 @@ export function App(): JSX.Element {
                 <Route path="duplicates" element={<Duplicates />} />
                 <Route path="archive" element={<ArchiveSettings />} />
                 <Route path="sla" element={<ProjectSla />} />
+                <Route path="webhooks" element={<WebhookSettings />} />
                 <Route path="dashboards" element={<Dashboard />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />}>

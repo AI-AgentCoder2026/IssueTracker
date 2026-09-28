@@ -1231,6 +1231,100 @@ export const slaApi = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Outgoing webhooks
+// ---------------------------------------------------------------------------
+
+export interface WebhookSummary {
+  id: number;
+  projectId: number;
+  name: string;
+  targetUrl: string;
+  events: string[];
+  enabled: boolean;
+  /** Consecutive failures; the service auto-disables past its threshold. */
+  failureCount: number;
+  disabledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WebhookDelivery {
+  id: number;
+  webhookId: number;
+  event: string;
+  status: string;
+  statusCode: number | null;
+  attempt: number;
+  error: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+function toWebhookSummary(value: unknown): WebhookSummary {
+  const r = asRecord(value);
+  return {
+    id: num(r.id),
+    projectId: num(r.projectId),
+    name: str(r.name),
+    targetUrl: str(r.targetUrl),
+    events: asArray(r.events).map((e) => str(e)),
+    enabled: bool(r.enabled),
+    failureCount: num(r.failureCount),
+    disabledAt: strOrNull(r.disabledAt),
+    createdAt: str(r.createdAt),
+    updatedAt: str(r.updatedAt),
+  };
+}
+
+function toWebhookDelivery(value: unknown): WebhookDelivery {
+  const r = asRecord(value);
+  return {
+    id: num(r.id),
+    webhookId: num(r.webhookId),
+    event: str(r.event),
+    status: str(r.status),
+    // Zero is a real status code, so it must not collapse to null.
+    statusCode: r.statusCode === null || r.statusCode === undefined ? null : num(r.statusCode),
+    attempt: num(r.attempt, 1),
+    error: strOrNull(r.error),
+    durationMs: r.durationMs === null || r.durationMs === undefined ? null : num(r.durationMs),
+    createdAt: str(r.createdAt),
+    completedAt: strOrNull(r.completedAt),
+  };
+}
+
+export const webhookApi = {
+  async list(projectId: ProjectId, signal?: AbortSignal): Promise<WebhookSummary[]> {
+    const raw = await http.get<unknown>(fill(API.webhooks.list, { projectId }), {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(raw, 'webhooks').map(toWebhookSummary);
+  },
+
+  create: (projectId: ProjectId, body: Record<string, unknown>) =>
+    http.post<unknown>(fill(API.webhooks.create, { projectId }), body),
+
+  update: (projectId: ProjectId, id: number, body: Record<string, unknown>) =>
+    http.patch<unknown>(fill(API.webhooks.update, { projectId, id }), body),
+
+  remove: (projectId: ProjectId, id: number) =>
+    http.delete<unknown>(fill(API.webhooks.remove, { projectId, id })),
+
+  async deliveries(projectId: ProjectId, id: number, signal?: AbortSignal): Promise<WebhookDelivery[]> {
+    const raw = await http.get<unknown>(fill(API.webhooks.deliveries, { projectId, id }), {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return asArray(raw, 'deliveries').map(toWebhookDelivery);
+  },
+
+  async test(projectId: ProjectId, id: number): Promise<WebhookDelivery> {
+    const raw = await http.post<unknown>(fill(API.webhooks.test, { projectId, id }), {});
+    return toWebhookDelivery(asRecord(unwrap(raw))['delivery']);
+  },
+};
+
 export const exportApi = {
   /**
    * Downloads an export. Returns the blob and the filename the server chose

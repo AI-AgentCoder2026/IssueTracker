@@ -190,7 +190,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking. Branch *rules* themselves are API-only. |
 | Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid, per-role visibility |
 | SLA breach countdown timers | ✅ | Response + resolution clocks, business-hours aware, with a live countdown on the issue page and a project triage view at `/sla` (breached and at-risk, worst first). |
-| Live webhook message broadcasting | ⚠️ | Signed outbound deliveries, retries, auto-disable — all working and tested. **No configuration screen**; webhooks are managed by API alone. |
+| Live webhook message broadcasting | ✅ | Signed outbound deliveries, retries, auto-disable. Reachable at `/webhooks`: create, enable/disable, send a test, and read the delivery log with status, attempt count and error. |
 
 ---
 
