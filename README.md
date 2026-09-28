@@ -301,6 +301,62 @@ npm run dev:web      # Vite dev server, proxying /api and /ws to :4000
 npm test             # both suites, 642 tests
 ```
 
+Or, to get a running demo with seed data in one step:
+
+```bash
+npm run demo         # build, migrate, seed if empty, then start on :4000
+```
+
+`npm run demo` is idempotent: it skips seeding when a database already exists,
+so it is safe to re-run rather than stacking a second copy of the demo data.
+
+### Running it in GitHub Codespaces
+
+The repository ships a `.devcontainer/`, so **Code → Open in Codespaces** gives
+a working environment with Node 24, dependencies installed and everything
+built. Port 4000 is pre-forwarded, and because the API also serves the built
+client, that one port publishes the whole application.
+
+```bash
+npm run demo
+```
+
+Then, in the **PORTS** tab, right-click port 4000 → **Port Visibility** →
+**Public**, and copy the `*.app.github.dev` URL. Anyone with that link can use
+the app without a GitHub account.
+
+Two things worth knowing:
+
+- **A public port is HTTP, not HTTPS.** Forcing HTTPS makes GitHub downgrade
+  the port to private-only. The session cookie is only marked `Secure` when
+  `PUBLIC_URL` starts with `https://`, so an HTTP preview link signs in
+  normally with no extra configuration.
+- **Codespaces burn quota and stop when it runs out.** Personal accounts get
+  120 core-hours a month, charged as hours × cores, and a stopped codespace
+  will not restart without a payment method. The default idle timeout is 30
+  minutes. That makes a codespace a good fit for a demo window rather than a
+  long-lived instance.
+
+### Publishing a demo elsewhere
+
+The app needs a **writable, persistent local disk** — SQLite for the database
+and a directory for attachments — plus a long-running process for its scheduler
+(archive sweeps, SLA clock checks, email outbox). That rules out any serverless
+platform, where the filesystem is read-only apart from an ephemeral `/tmp` and
+functions only exist while serving a request.
+
+It runs unchanged on a small VPS, on Fly.io with a volume, or on Oracle's and
+Google's free tiers. Minimum environment:
+
+```
+NODE_ENV=production
+PORT=4000
+DATA_DIR=/var/lib/tracker          # database + uploads; must be a real disk
+PUBLIC_URL=https://tracker.example.com
+BOOTSTRAP_ADMIN_EMAIL=you@example.com
+BOOTSTRAP_ADMIN_PASSWORD='...'      # the first registrant becomes admin otherwise
+```
+
 Read [`docs/foundation.md`](docs/foundation.md) before adding a service or a
 route. It documents the database contract, the error model, the auditing rules
 and the conventions every module follows, so new work composes with the existing

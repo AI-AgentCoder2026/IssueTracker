@@ -1,0 +1,50 @@
+{
+  // A GitHub Codespace for this repository.
+  //
+  // The image carries Node 24, which is what `node:sqlite` and the
+  // experimental type-stripping in the build need. The post-create step
+  // installs and builds, because the server and web workspaces import
+  // @tracker/shared from its dist directory and a fresh checkout has none --
+  // without this the codespace opens and immediately fails to typecheck.
+  //
+  // Port 4000 is the API, which also serves the built SPA, so forwarding it
+  // publishes the whole application in one URL.
+  "name": "IssueTracker",
+
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+
+  "features": {
+    // Git operations and a readable diff experience out of the box.
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+
+  "forwardPorts": [4000],
+
+  // Public preview URLs are HTTP, so the port is left on HTTP deliberately;
+  // forcing HTTPS makes GitHub downgrade the port to private-only.
+  "portsAttributes": {
+    "4000": {
+      "label": "IssueTracker (API + web)",
+      "onAutoForward": "openPreview"
+    }
+  },
+
+  "postCreateCommand": "npm ci && npm run build",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // The project has no linter of its own; `npm run lint` is the
+        // typecheck, so the built-in checker is the useful one here.
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  },
+
+  // The container is the whole app; there is nothing to attach a debugger to
+  // on the client side, and the server runs from dist.
+  "remoteUser": "node"
+}
