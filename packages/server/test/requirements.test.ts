@@ -80,7 +80,6 @@ const MUST_REACH_FROM_UI: Record<string, string> = {
  * in the same commit, which is the point.
  */
 const NOT_YET_IN_UI: Record<string, string> = {
-  'bulk.apply': 'The endpoint and its confirmation-preview route work; there is no multi-select editor in the interface.',
   'archive.candidates': 'Stale-issue archiving is a scheduled job and an API. No screen lists what it would archive.',
   'archive.run': 'The archive run can be triggered by API or the scheduler; no button calls it.',
   'export.run': 'JSON/CSV/Markdown export is available over the API only.',

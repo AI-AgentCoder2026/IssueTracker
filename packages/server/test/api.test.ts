@@ -746,6 +746,131 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('bulk editing over HTTP', () => {
+  let bulkProject = 0;
+  let bulkIds: number[] = [];
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'BULK', name: 'Bulk' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    bulkProject = created.body.project.id;
+
+    for (let i = 0; i < 3; i += 1) {
+      const issue = await post(API.issues.create, {
+        projectId: bulkProject,
+        title: `bulk candidate ${i}`,
+        priority: 'low',
+      });
+      assert.equal(issue.status, 200, `issue create failed: ${JSON.stringify(issue.body)}`);
+      bulkIds.push(issue.body.issue.id);
+    }
+  });
+
+  it('previews without writing anything', async () => {
+    const operations = [{ op: 'setPriority', priority: 'critical' }];
+    const preview = await post('/api/issues/bulk/preview', { issueIds: bulkIds, operations });
+    assert.equal(preview.status, 200, `preview failed: ${JSON.stringify(preview.body)}`);
+    assert.equal(preview.body.requested, 3);
+    assert.equal(preview.body.eligible, 3, 'the owner may edit all of them');
+    assert.equal(preview.body.operations.length, 1);
+    assert.equal(preview.body.operations[0].wouldChange, 3, 'all three are currently low');
+    assert.ok(
+      String(preview.body.operations[0].label).length > 0,
+      'the preview must describe the change in words, not just count it',
+    );
+
+    // The whole point of a preview: nothing was written.
+    for (const id of bulkIds) {
+      const issue = await get(`/api/issues/${id}`);
+      assert.equal(issue.body.issue.priority, 'low', 'a preview must not change the issue');
+    }
+  });
+
+  it('applies to the selection and reports per-issue results', async () => {
+    const result = await post(API.bulk.apply, {
+      issueIds: bulkIds,
+      operations: [{ op: 'setPriority', priority: 'critical' }],
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.requested, 3);
+    assert.equal(result.body.succeeded, 3);
+    assert.equal(result.body.failed, 0);
+    assert.equal(result.body.results.length, 3, 'every issue reports its own outcome');
+
+    for (const id of bulkIds) {
+      const issue = await get(`/api/issues/${id}`);
+      assert.equal(issue.body.issue.priority, 'critical', `issue ${id} should have changed`);
+    }
+  });
+
+  it('reports a no-op preview rather than pretending work happened', async () => {
+    // The three issues are already critical. A preview that claimed 3 changes
+    // would be a lie, and a bulk bar that showed it would push people to apply
+    // an edit that does nothing.
+    const preview = await post('/api/issues/bulk/preview', {
+      issueIds: bulkIds,
+      operations: [{ op: 'setPriority', priority: 'critical' }],
+    });
+    assert.equal(preview.status, 200);
+    assert.equal(
+      preview.body.operations[0].wouldChange,
+      0,
+      'an edit that changes nothing must be reported as changing nothing',
+    );
+  });
+
+  it('rejects an empty selection rather than doing nothing quietly', async () => {
+    const response = await post(API.bulk.apply, {
+      issueIds: [],
+      operations: [{ op: 'setPriority', priority: 'low' }],
+    });
+    assert.equal(response.status, 422, 'the schema requires at least one issue');
+  });
+
+  it('isolates a failure instead of aborting the whole batch', async () => {
+    const result = await post(API.bulk.apply, {
+      issueIds: [...bulkIds, 999_999],
+      operations: [{ op: 'setPriority', priority: 'low' }],
+      continueOnError: true,
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.succeeded, 3, 'the real issues still change');
+    assert.equal(result.body.failed, 1, 'the missing one is reported, not thrown');
+    const missing = result.body.results.find((r: { issueId: number }) => r.issueId === 999_999);
+    assert.equal(missing.ok, false);
+    assert.ok(missing.error, 'a failed row explains itself');
+  });
+
+  it('refuses bulk editing without the permission', async () => {
+    const viewer = await post(API.users.create, {
+      username: 'bulkviewer',
+      email: 'bulkviewer@example.com',
+      displayName: 'Bulk Viewer',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(viewer.status, 201);
+
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'bulkviewer', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const response = await fetch(`${baseUrl}${API.bulk.apply}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: cookie as string },
+      body: JSON.stringify({
+        issueIds: bulkIds,
+        operations: [{ op: 'setPriority', priority: 'low' }],
+      }),
+    });
+    assert.equal(response.status, 403, 'a user with no project role cannot bulk edit');
+  });
+});
+
 describe('duplicate review endpoints', () => {
   let dupProject = 0;
   let pairKey = '';

@@ -1080,4 +1080,94 @@ export const dedupeApi = {
     http.delete<unknown>(fill(API.dedupe.dismiss, { linkId })),
 };
 
+// ---------------------------------------------------------------------------
+// Bulk editing
+// ---------------------------------------------------------------------------
+
+/** One operation, in the shape `bulkOperationSchema` expects. */
+export type BulkOperationDraft = Record<string, unknown>;
+
+export interface BulkOperationPreview {
+  op: string;
+  label: string;
+  wouldChange: number;
+  skipped: number;
+  notes: string[];
+}
+
+export interface BulkPreview {
+  requested: number;
+  eligible: number;
+  operations: BulkOperationPreview[];
+}
+
+export interface BulkResult {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  results: Array<{ issueId: number; ok: boolean; error: string | null }>;
+}
+
+function toBulkPreview(value: unknown): BulkPreview {
+  const r = asRecord(unwrap(value));
+  return {
+    requested: num(r.requested),
+    eligible: num(r.eligible),
+    operations: asArray(r.operations).map((entry) => {
+      const op = asRecord(entry);
+      return {
+        op: str(op.op),
+        label: str(op.label),
+        wouldChange: num(op.wouldChange),
+        skipped: num(op.skipped),
+        notes: asArray(op.notes).map((n) => str(n)).filter((n) => n !== ''),
+      };
+    }),
+  };
+}
+
+function toBulkResult(value: unknown): BulkResult {
+  const r = asRecord(unwrap(value));
+  return {
+    requested: num(r.requested),
+    succeeded: num(r.succeeded),
+    failed: num(r.failed),
+    results: asArray(r.results).map((entry) => {
+      const row = asRecord(entry);
+      return {
+        issueId: num(row.issueId),
+        ok: bool(row.ok),
+        error: strOrNull(row.error),
+      };
+    }),
+  };
+}
+
+export const bulkApi = {
+  /** Dry run for the confirmation dialog. Writes nothing. */
+  async preview(
+    issueIds: number[],
+    operations: BulkOperationDraft[],
+    signal?: AbortSignal,
+  ): Promise<BulkPreview> {
+    return toBulkPreview(
+      await http.post<unknown>(
+        '/api/issues/bulk/preview',
+        { issueIds, operations },
+        { ...(signal !== undefined ? { signal } : {}) },
+      ),
+    );
+  },
+
+  async apply(
+    issueIds: number[],
+    operations: BulkOperationDraft[],
+    continueOnError = true,
+  ): Promise<BulkResult> {
+    return toBulkResult(
+      await http.post<unknown>(API.bulk.apply, { issueIds, operations, continueOnError }),
+    );
+  },
+};
+
 export type { SyncMode, WorkflowTransition, DependencyKind };

@@ -25,6 +25,7 @@ import {
 import { formatDate, formatRelative } from '../lib/format';
 import { Avatar } from '../components/Avatar';
 import { Badge } from '../components/Badge';
+import { BulkEditBar } from '../components/BulkEditBar';
 import { Button } from '../components/Button';
 import { EmptyState, ErrorState } from '../components/EmptyState';
 import { Field, Select } from '../components/Select';
@@ -69,6 +70,8 @@ export function IssueList(): JSX.Element {
   const [filters, setFilters] = useState<SearchFilters>(EMPTY_FILTERS);
   const debouncedQuery = useDebounce(filters.q, 350);
   const [showFilters, setShowFilters] = useState(false);
+  // Bulk-edit selection, keyed by issue id so it survives re-sorting and paging.
+  const [selectedIds, setSelectedIds] = useState<readonly number[]>([]);
 
   const labelsQuery = useQuery<Label[]>((signal) => projectApi.labels(projectId, signal), [projectId]);
   const membersQuery = useQuery<MemberView[]>(
@@ -107,6 +110,27 @@ export function IssueList(): JSX.Element {
     (filters.dueWithin !== undefined ? 1 : 0) +
     (filters.overdueOnly ? 1 : 0) +
     (filters.unassignedOnly ? 1 : 0);
+
+  const visibleIssues = results.data?.issues ?? [];
+  const visibleIds = visibleIssues.map((issue) => issue.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+
+  const toggle = (id: number): void =>
+    setSelectedIds((previous) =>
+      previous.includes(id) ? previous.filter((each) => each !== id) : [...previous, id],
+    );
+
+  const toggleAllVisible = (): void =>
+    setSelectedIds((previous) =>
+      allVisibleSelected
+        ? previous.filter((id) => !visibleIds.includes(id))
+        : [...new Set([...previous, ...visibleIds])],
+    );
+
+  const selectedIssues = useMemo(
+    () => visibleIssues.filter((issue) => selectedIds.includes(issue.id)),
+    [visibleIssues, selectedIds],
+  );
 
   return (
     <div className="stack">
@@ -259,6 +283,16 @@ export function IssueList(): JSX.Element {
             <caption className="visually-hidden">Issues matching the current filters</caption>
             <thead>
               <tr>
+                <th scope="col" style={{ width: 36 }}>
+                  <label className="checkbox" title="Select every issue on this page">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleAllVisible}
+                      aria-label="Select all issues on this page"
+                    />
+                  </label>
+                </th>
                 <th scope="col">Key</th>
                 <th scope="col">Title</th>
                 <th scope="col">Type</th>
@@ -270,8 +304,15 @@ export function IssueList(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {(results.data?.issues ?? []).map((issue) => (
-                <IssueRow key={issue.id} issue={issue} projectId={projectId} labelsById={labelsById} />
+              {visibleIssues.map((issue) => (
+                <IssueRow
+                  key={issue.id}
+                  issue={issue}
+                  projectId={projectId}
+                  labelsById={labelsById}
+                  selected={selectedIds.includes(issue.id)}
+                  onToggle={() => toggle(issue.id)}
+                />
               ))}
             </tbody>
           </table>
@@ -281,6 +322,14 @@ export function IssueList(): JSX.Element {
       {results.data !== null && results.data.warnings.length > 0 ? (
         <p className="subtle">Note: {results.data.warnings.join(' ')}</p>
       ) : null}
+
+      <BulkEditBar
+        selected={selectedIssues}
+        labels={labelsQuery.data ?? []}
+        members={membersQuery.data ?? []}
+        onClear={() => setSelectedIds([])}
+        onApplied={results.refetch}
+      />
     </div>
   );
 }
@@ -289,13 +338,27 @@ function IssueRow({
   issue,
   projectId,
   labelsById,
+  selected,
+  onToggle,
 }: {
   issue: IssueSummary;
   projectId: ReturnType<typeof asProjectId>;
   labelsById: ReadonlyMap<number, string>;
+  selected: boolean;
+  onToggle: () => void;
 }): JSX.Element {
   return (
     <tr>
+      <td>
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            aria-label={`Select ${issue.key}`}
+          />
+        </label>
+      </td>
       <td>
         <Link to={`/p/${projectId}/issues/${issue.id}`} className="mono">
           {issue.key}

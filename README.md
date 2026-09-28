@@ -143,7 +143,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | `Open → In Progress → Closed` | ✅ | Default workflow, seeded per project |
 | Parent/child ticket nesting | ✅ | `parentId`, cycle detection on both write and re-parent |
 | Dependencies | ✅ | 10 link kinds; blocking cycles rejected |
-| Bulk issue editing | ⚠️ | `services/bulk.service.ts` — 13 operations, per-row error isolation, dry-run preview. **API only**: the endpoint and its confirmation preview work, but the interface has no multi-select editor. |
+| Bulk issue editing | ✅ | `services/bulk.service.ts` — 13 operations, per-row error isolation, dry-run preview. Reachable: multi-select in the issue list opens a bulk bar that previews what would change before anything is written. |
 | Automated stale-issue archiving | ⚠️ | `services/archive.service.ts` — preview, policy, idempotent run, scheduler-driven. **API and scheduler only**: nothing lists what would be archived and no button triggers a run. |
 | AI-driven duplicate detection | ⚠️ | `services/dedupe.service.ts` — see the note below. Reachable: `/duplicates` lists detected pairs, runs a scan, and dismisses or confirms each one. The detector is lexical, not a model. |
 
