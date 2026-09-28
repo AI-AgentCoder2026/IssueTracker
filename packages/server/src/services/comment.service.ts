@@ -218,7 +218,10 @@ export class CommentService {
       [commentId],
     );
     if (!row) throw notFound('Comment', commentId);
-    return this.hydrate(row);
+    // Mentions and attachments are part of the declared type, so they are
+    // resolved here too, not only by listForIssue. A caller that posts a comment
+    // and reads the response should see the same shape as one that lists them.
+    return this.hydrateBatch([row])[0] as CommentWithAuthor;
   }
 
   /**
@@ -246,58 +249,7 @@ export class CommentService {
       [...params, limit],
     );
 
-    if (rows.length === 0) return [];
-
-    const ids = rows.map((row) => Number(row.id));
-    const idSlots = placeholders(ids.length);
-
-    const mentionsByComment = new Map<number, Mention[]>();
-    for (const row of this.db.all<Record<string, unknown>>(
-      `SELECT m.comment_id, u.id, u.username, u.display_name
-       FROM comment_mentions m JOIN users u ON u.id = m.user_id
-       WHERE m.comment_id IN (${idSlots})`,
-      ids,
-    )) {
-      const commentId = Number(row.comment_id);
-      const list = mentionsByComment.get(commentId) ?? [];
-      list.push({
-        userId: Number(row.id) as Mention['userId'],
-        username: String(row.username),
-        displayName: String(row.display_name),
-        offset: 0,
-      });
-      mentionsByComment.set(commentId, list);
-    }
-
-    const attachmentsByComment = new Map<
-      number,
-      Array<{ id: number; filename: string; mimeType: string; sizeBytes: number }>
-    >();
-    for (const row of this.db.all<Record<string, unknown>>(
-      `SELECT id, comment_id, filename, mime_type, size_bytes
-       FROM attachments WHERE comment_id IN (${idSlots}) ORDER BY id ASC`,
-      ids,
-    )) {
-      const commentId = Number(row.comment_id);
-      const list = attachmentsByComment.get(commentId) ?? [];
-      list.push({
-        id: Number(row.id),
-        filename: String(row.filename),
-        mimeType: String(row.mime_type),
-        sizeBytes: Number(row.size_bytes),
-      });
-      attachmentsByComment.set(commentId, list);
-    }
-
-    return rows.map((row) => {
-      const id = Number(row.id);
-      const hydrated = this.hydrate(row);
-      return {
-        ...hydrated,
-        mentions: mentionsByComment.get(id) ?? [],
-        attachments: attachmentsByComment.get(id) ?? [],
-      };
-    });
+    return this.hydrateBatch(rows);
   }
 
   /**
@@ -421,6 +373,70 @@ export class CommentService {
       [userId, Math.min(limit, 200)],
     );
     return rows.map((row) => ({ comment: this.hydrate(row), issueKey: String(row.issue_key ?? '') }));
+  }
+
+  /**
+   * Fill in mentions and attachments for a batch of comment rows.
+   *
+   * Shared by `getById` and `listForIssue` so a single comment and a page of
+   * them are hydrated identically - a caller that posts a comment and reads
+   * the response gets the same shape as one that lists them.
+   */
+  private hydrateBatch(rows: Record<string, unknown>[]): CommentWithAuthor[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => Number(row.id));
+    // Bound placeholders rather than an inlined id list: the values stay
+    // parameters, so the bind count always matches the placeholder count.
+    const idSlots = placeholders(ids.length);
+
+
+    const mentionsByComment = new Map<number, Mention[]>();
+    for (const row of this.db.all<Record<string, unknown>>(
+      `SELECT m.comment_id, u.id, u.username, u.display_name
+       FROM comment_mentions m JOIN users u ON u.id = m.user_id
+       WHERE m.comment_id IN (${idSlots})`,
+      ids,
+    )) {
+      const commentId = Number(row.comment_id);
+      const list = mentionsByComment.get(commentId) ?? [];
+      list.push({
+        userId: Number(row.id) as Mention['userId'],
+        username: String(row.username),
+        displayName: String(row.display_name),
+        offset: 0,
+      });
+      mentionsByComment.set(commentId, list);
+    }
+
+    const attachmentsByComment = new Map<
+      number,
+      Array<{ id: number; filename: string; mimeType: string; sizeBytes: number }>
+    >();
+    for (const row of this.db.all<Record<string, unknown>>(
+      `SELECT id, comment_id, filename, mime_type, size_bytes
+       FROM attachments WHERE comment_id IN (${idSlots}) ORDER BY id ASC`,
+      ids,
+    )) {
+      const commentId = Number(row.comment_id);
+      const list = attachmentsByComment.get(commentId) ?? [];
+      list.push({
+        id: Number(row.id),
+        filename: String(row.filename),
+        mimeType: String(row.mime_type),
+        sizeBytes: Number(row.size_bytes),
+      });
+      attachmentsByComment.set(commentId, list);
+    }
+
+    return rows.map((row) => {
+      const id = Number(row.id);
+      const hydrated = this.hydrate(row);
+      return {
+        ...hydrated,
+        mentions: mentionsByComment.get(id) ?? [],
+        attachments: attachmentsByComment.get(id) ?? [],
+      };
+    });
   }
 
   private hydrate(row: Record<string, unknown>): CommentWithAuthor {
