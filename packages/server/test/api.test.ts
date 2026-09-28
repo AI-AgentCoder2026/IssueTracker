@@ -402,6 +402,69 @@ describe('dashboards over HTTP', () => {
     assert.equal(rendered.status, 200, JSON.stringify(rendered.body));
     assert.ok(Array.isArray(rendered.body.widgets));
   });
+
+  it('lists a dashboard’s widgets on their own', async () => {
+    const visible = await get(`/api/dashboards/visible?projectId=${projectId}`);
+    const first = visible.body.dashboards[0];
+    const response = await get(`/api/dashboards/${first.id}/widgets`);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(Array.isArray(response.body.widgets));
+  });
+
+  it('refuses the widget list for a dashboard the caller cannot see', async () => {
+    const response = await get('/api/dashboards/999999/widgets');
+    assert.equal(response.status, 404);
+  });
+});
+
+describe('role catalogue over HTTP', () => {
+  it('lists every role with its rank and grants', async () => {
+    const response = await get(API.projects.roles.replace(':projectId', String(projectId)));
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    const roles = response.body.roles as Array<{ role: string; rank: number; permissions: string[] }>;
+    assert.equal(roles.length, 6, 'six built-in roles');
+    assert.deepEqual(
+      roles.map((r) => r.role),
+      ['owner', 'admin', 'maintainer', 'developer', 'reporter', 'viewer'],
+    );
+    // `ROLE_RANK` counts *down* with privilege: owner is 60, viewer is 10, so
+    // "this role outranks you" is the comparison `rank < rank`. The guards in
+    // the membership service rely on that direction, so the ordering a client
+    // renders must preserve it.
+    const ranks = roles.map((r) => r.rank);
+    assert.deepEqual([...ranks].sort((a, b) => b - a), ranks, 'listed most privileged first');
+    assert.equal(ranks[0], 60);
+    assert.equal(ranks[ranks.length - 1], 10);
+    assert.ok(
+      (roles[0]?.permissions.length ?? 0) > (roles[roles.length - 1]?.permissions.length ?? 0),
+      'an owner must be granted more than a viewer',
+    );
+  });
+
+  it('requires a member-read grant', async () => {
+    const outsider = await post(API.users.create, {
+      username: 'nocatalog',
+      email: 'nocatalog@example.com',
+      displayName: 'No Catalog',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(outsider.status, 201);
+
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'nocatalog', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const response = await fetch(
+      `${baseUrl}${API.projects.roles.replace(':projectId', String(projectId))}`,
+      { headers: { cookie: cookie as string } },
+    );
+    assert.equal(response.status, 403, 'a non-member must not read the project role catalogue');
+  });
 });
 
 describe('GitLab integration over HTTP', () => {

@@ -23,10 +23,6 @@ const routeDir = join(serverRoot, 'src', 'routes');
 
 /** Declared-but-unrouted constants, each with why it is still open. */
 const KNOWN_GAPS: Record<string, string> = {
-  'projects.roles':
-    'No list-the-roles endpoint. The role catalogue is implicit; the SPA has no role editor.',
-  'dashboards.widgets': 'Widgets are returned embedded in the dashboard; there is no separate list route.',
-  'admin.users': 'No instance-wide user list for administrators. /api/users requires a project context.',
   'admin.settings': 'No instance settings route; configuration is environment-driven.',
   'admin.updateSettings': 'No instance settings route; configuration is environment-driven.',
 };

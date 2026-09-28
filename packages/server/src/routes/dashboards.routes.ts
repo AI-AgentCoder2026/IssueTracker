@@ -172,6 +172,17 @@ export const dashboardRoutes: FastifyPluginAsync = async (app: FastifyInstance) 
     return { widgets };
   });
 
+  // Convenience for the layout editor: the dashboard payload already carries
+  // its widgets, but a client rebuilding just the widget list should not have
+  // to fetch and discard the rest of the definition.
+  app.get(API.dashboards.widgets, async (request) => {
+    const ctx = authed(request);
+    const id = parseId(params(request)['id'], 'dashboard');
+    const existing = ctx.services.dashboards.get(id);
+    allow(ctx, 'dashboard.read', existing.projectId);
+    return { widgets: existing.widgets };
+  });
+
   app.post(API.dashboards.addWidget, async (request, reply) => {
     const ctx = authed(request);
     const id = parseId(params(request)['id'], 'dashboard');

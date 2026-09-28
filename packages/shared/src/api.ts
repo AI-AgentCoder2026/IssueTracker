@@ -228,7 +228,9 @@ export const API = {
 
   // -- admin ---------------------------------------------------------------
   admin: {
-    users: '/api/admin/users',
+    // No `/api/admin/users`: `API.users.list` already is the instance-wide
+    // list, gated on `instance.settings`. A second path to the same rows would
+    // be one more thing to keep in step with the first.
     auditLog: '/api/admin/audit',
     verifyAuditChain: '/api/admin/audit/verify',
     settings: '/api/admin/settings',

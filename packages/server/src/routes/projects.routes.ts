@@ -4,6 +4,8 @@
 
 import {
   API,
+  ROLES,
+  ROLE_RANK,
   addMemberSchema,
   can,
   createLabelSchema,
@@ -11,6 +13,7 @@ import {
   createProjectSchema,
   createStatusSchema,
   createTransitionSchema,
+  permissionsForRole,
   updateProjectSchema,
   updateStatusSchema,
   type Role,
@@ -66,6 +69,23 @@ export const projectRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     const ctx = requireAuth(request);
     requirePermission(request, 'project.read', projectId);
     return ctx.services.projects.stats(projectId);
+  });
+
+  // -- role catalogue ------------------------------------------------------
+  // The role set is fixed in `@tracker/shared`; this exposes it so a member
+  // editor can offer exactly the roles that exist, with their rank and grants,
+  // instead of hard-coding a list that drifts.
+  app.get(API.projects.roles, async (request) => {
+    const projectId = projectIdOf(request);
+    requireAuth(request);
+    requirePermission(request, 'member.read', projectId);
+    return {
+      roles: ROLES.map((role) => ({
+        role,
+        rank: ROLE_RANK[role],
+        permissions: permissionsForRole(role),
+      })),
+    };
   });
 
   // -- members -------------------------------------------------------------
