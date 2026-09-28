@@ -198,24 +198,6 @@ export const adminRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       since: query.since,
     });
   });
-
-  // -- SSO -----------------------------------------------------------------
-  app.get('/api/admin/sso', async (request) => {
-    const ctx = requireAuth(request);
-    requirePermission(request, 'instance.settings');
-
-    // The client secret is never returned, only whether one is configured.
-    const rows = ctx.services.db.all<Record<string, unknown>>(
-      'SELECT * FROM sso_configurations ORDER BY is_default DESC, name ASC',
-    );
-    return {
-      configurations: rows.map((row) => ({
-        ...row,
-        client_secret_encrypted: undefined,
-        hasSecret: row.client_secret_encrypted !== null && row.client_secret_encrypted !== '',
-      })),
-    };
-  });
 };
 
 export default commentRoutes;

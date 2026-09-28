@@ -54,9 +54,9 @@ durable email outbox.
 
 **Access and security.** Six built-in roles (`owner`, `admin`, `maintainer`,
 `developer`, `reporter`, `viewer`) behind a single capability-based permission
-check, multi-project membership, SSO/SAML and OIDC configuration, time-bound
-guest access tokens, and an **immutable audit trail** whose entries are
-hash-chained and rejected at the database level if anyone tries to edit them.
+check, multi-project membership, time-bound guest access tokens, and an
+**immutable audit trail** whose entries are hash-chained and rejected at the
+database level if anyone tries to edit them.
 
 **Analytics and search.** SQLite FTS5 full-text search with field filters,
 custom saved filters, JSON/CSV/Markdown export, role-scoped **customisable
@@ -162,7 +162,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | RBAC | ✅ | Six roles → capability grants → one `can()` check |
 | Multi-project permissions | ✅ | Per-project membership with rank-safe role changes |
-| SSO / SAML | ✅ | Both verified: OIDC against the provider JWKS (`services/oidc.ts`), SAML via XML-DSIG with wrapping-attack defence (`services/saml.ts`) |
+| SSO / SAML | ❌ | **Deliberately not implemented.** Verification code existed and asserted signatures before reading any claim, but configurations could only be listed — never created, edited or deleted, at either the route or service layer — so a deployment had to write to `sso_configurations` by hand. A feature you cannot configure is worse than its absence, so it was removed rather than shipped half-reachable. The table and all code are gone (migration `005_drop_sso.sql`). |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
 | Biometric mobile app login | ⚠️ | **Partially met.** Passkeys via WebAuthn give Face ID / Touch ID / fingerprint sign-in in any browser, and that is fully implemented. The literal requirement — a *mobile app* that authenticates biometrically — is **not** met: this project ships no native app. |
@@ -465,20 +465,28 @@ bind every value.
 
 ```
 packages/server/test/
-├── helpers.ts             isolated in-memory database per test
-├── helpers.ts            per-test in-memory database and fixtures
-├── rbac.test.ts          permission matrix, ownership fallback
-├── audit.test.ts         hash chain, immutability, tamper detection
-├── crypto-time.test.ts   password hashing, tokens, encryption, scrubbing
-├── issue.test.ts         lifecycle, nesting cycles, dependencies, board
-├── workflow.test.ts      transition rules, WIP limits, timing stamps
+├── helpers.ts             per-test in-memory database and fixtures
+├── rbac.test.ts           permission matrix, ownership fallback
+├── audit.test.ts          hash chain, immutability, tamper detection
+├── crypto-time.test.ts    password hashing, tokens, encryption, scrubbing
+├── issue.test.ts          lifecycle, nesting cycles, dependencies, board
+├── workflow.test.ts       transition rules, WIP limits, timing stamps
 ├── versioncontrol.test.ts branch naming rules, reference ownership
-├── mail.test.ts          message construction, SMTP round trip
-├── oidc.test.ts          JWKS verification, forged and replayed tokens
-├── saml.test.ts          XML-DSIG verification, signature wrapping
-├── webauthn.test.ts      challenge lifecycle, cloning, lockout
-├── gitlab.test.ts        source-of-truth modes, conflict resolution, loops
-└── api.test.ts           end-to-end over HTTP
+├── mail.test.ts           message construction, SMTP round trip
+├── webauthn.test.ts       challenge lifecycle, cloning, lockout
+├── gitlab.test.ts         source-of-truth modes, conflict resolution, loops
+├── realtime.test.ts       hub fan-out, presence isolation, live WebSocket
+├── contract.test.ts       every declared route constant is actually routed
+├── migration.test.ts      upgrade path from a previously-migrated database
+├── search.test.ts         FTS queries, filters, export
+├── dedupe.test.ts         duplicate scoring and dismissal
+├── sla.test.ts            clock settlement, breach, at-risk windows
+├── dashboards.test.ts     role-scoped widgets and rendering
+├── collaboration.test.ts  comments, mentions, attachments, search filters
+├── attachment.test.ts     upload limits, traversal, content sniffing
+├── webhook.test.ts        SSRF defence, signatures, retry, auto-disable
+├── services.test.ts       project, member and guest-token rules
+└── api.test.ts            end-to-end over HTTP
 ```
 
 Every test gets its own in-memory database, so suites are isolated and can run
@@ -523,24 +531,15 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 ### Known gaps
 
-- **SSO configurations can be read but not written through the API.** The
-  OIDC and SAML verification code is complete and tested, and
-  `GET /api/admin/sso` lists what is configured — but there is no create,
-  update or delete at either the route or the service layer, so a deployment
-  has to insert rows into `sso_configurations` directly. Treat SSO as
-  *verifiable but not yet manageable from the product*. The same applies to
-  instance settings: configuration is environment-driven and there is no
-  `/api/admin/settings` route.
-- **14 declared contract entries have no route.** `@tracker/shared` promises
+- **Instance settings are environment-driven only.** There is no
+  `/api/admin/settings` route, so configuration is edited in the environment
+  rather than from the product.
+- **10 declared contract entries have no route.** `@tracker/shared` promises
   more surface than the server implements. The list is asserted in
   `packages/server/test/contract.test.ts` as an explicit, commented allowlist
   so the gap is tracked and new drift fails CI. The substantive ones are
   per-status and per-transition workflow CRUD (the whole workflow is `PUT` as
   one document instead), and an instance-wide admin user list.
-- The bundled SAML client is a service provider, not an identity provider.
-  It validates inbound assertions; it does not implement the full SAML
-  metadata/artifact-resolution ecosystem. OIDC is likewise confidential-client
-  only — no PKCE — so a public client must not use it yet.
 - The bundled SMTP client speaks only submission: it will not act as a
   receiving server, and it negotiates STARTTLS rather than exotic extensions.
   With no `SMTP_*` or `MAIL_WEBHOOK_URL` set, notifications stay in
@@ -548,6 +547,8 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
   is configured. In-app notifications and the WebSocket channel work either way.
 - Duplicate detection is lexical, not semantic (see above).
 - No rate limiting per API token, only per IP.
+- Single sign-on was removed on purpose, not by oversight. See the Access and
+  security table above.
 
 ---
 
@@ -558,14 +559,16 @@ Deliberately not built yet, in rough priority order:
 - **A native mobile app.** The "biometric mobile app login" requirement is only
   partially met: WebAuthn passkeys give Face ID / Touch ID / fingerprint
   sign-in in any browser, but there is no native app and therefore no in-app
-  biometric API.- **Video recording with audio across every browser** — capture, review and
+  biometric API.
+- **Video recording with audio across every browser** — capture, review and
   inline playback all work, but `getDisplayMedia` audio is Chromium-only, and
   there is no transcription or playback-speed control.
-- SAML metadata import from an IdP, and signed AuthnRequest support.
-
 - **A real embedding model** behind the duplicate-detection interface.
 - **Postgres adapter** — the query layer is deliberately portable.
-- Saved searches and per-user dashboard layouts.
+- **Instance settings and per-user dashboard layouts**, saved searches, and an
+  admin user list.
+- **Single sign-on**, if it is ever wanted again — it would need configuration
+  CRUD to exist at all, not just verification.
 
 ---
 

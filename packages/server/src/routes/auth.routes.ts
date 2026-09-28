@@ -2,8 +2,8 @@
  * Authentication routes.
  *
  * Every route here is reachable without credentials; the ones that need a
- * principal call `requireAuth` themselves. Successful credential and SSO
- * exchanges set the session cookie; `logout` clears it.
+ * principal call `requireAuth` themselves. Successful credential exchanges set
+ * the session cookie; `logout` clears it.
  *
  * The login route is rate limited to 5 attempts per 15 minutes per IP. The
  * limit is declared through the `@fastify/rate-limit` route config, which the
@@ -15,13 +15,7 @@ import { z } from 'zod';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { badRequest, notFound, unauthenticated } from '../errors.ts';
 import type { RequestMeta } from '../services/auth.service.ts';
-import {
-  createSsoState,
-  newSamlRequestId,
-  newSsoNonce,
-  readSsoState,
-  safeRedirectPath,
-} from '../services/auth.service.ts';
+import { safeRedirectPath } from '../services/auth.service.ts';
 import {
   clearSessionCookie,
   guestServiceFor,
@@ -33,10 +27,6 @@ import {
 
 const guestRedeemSchema = z.object({
   token: z.string().min(16).max(512),
-});
-
-const ssoStartQuerySchema = z.object({
-  redirect: z.string().max(2048).optional(),
 });
 
 /** Body the SPA needs to render a session: the user plus their project roles. */
@@ -165,129 +155,12 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       expiresAt: redeemed.expiresAt,
     };
   });
-
-  // ---------------------------------------------------------------------
-  // SSO
-  // ---------------------------------------------------------------------
-
-  /** Providers offered on the login screen. No endpoints, no client secrets. */
-  app.get(API.auth.ssoProviders, async () => {
-    const services = servicesOf(app);
-    const configurations = services.auth.listEnabledSsoConfigurations();
-
-    return configurations.map((sso) => ({
-      name: sso.name,
-      protocol: sso.protocol,
-      isDefault: sso.isDefault,
-      startUrl: API.auth.ssoStart.replace(':provider', encodeURIComponent(sso.name)),
-      metadataUrl: `/api/auth/sso/${encodeURIComponent(sso.name)}/metadata`,
-    }));
-  });
-
-  /** Begin a federated login: 302 to the IdP with a signed `state`. */
-  app.get(API.auth.ssoStart, async (request, reply: FastifyReply) => {
-    const services = servicesOf(app);
-    const params = request.params as { provider: string };
-    const query = ssoStartQuerySchema.parse(request.query ?? {});
-
-    const sso = services.auth.findSsoConfigurationByName(params.provider);
-    if (!sso) throw notFound('SSO provider', params.provider);
-
-    // The nonce binds the OIDC token to this browser session, and the request
-    // id binds the SAML assertion to the request we sent. Both live in the
-    // signed state, so neither can be chosen by the caller.
-    const requestId = sso.protocol === 'saml' ? newSamlRequestId() : '';
-    const state = createSsoState(services.config.sessionSecret, {
-      provider: sso.name,
-      protocol: sso.protocol,
-      redirect: safeRedirectPath(query.redirect),
-      requestId,
-      nonce: newSsoNonce(),
-    });
-
-    const target =
-      sso.protocol === 'saml'
-        ? services.auth.buildSamlRedirectUrl(sso, state, requestId)
-        : services.auth.buildAuthorizationUrl(sso, state, services.auth.ssoRedirectUri(sso.name));
-
-    return reply.redirect(target, 302);
-  });
-
-  /**
-   * Assertion consumer. OIDC arrives as a query string, SAML as a form POST.
-   */
-  app.route({
-    method: ['GET', 'POST'],
-    url: API.auth.ssoCallback,
-    handler: async (request, reply) => {
-      const services = servicesOf(app);
-      const params = request.params as { provider: string };
-      const sso = services.auth.findSsoConfigurationByName(params.provider);
-      if (!sso) throw notFound('SSO provider', params.provider);
-
-      const source = {
-        ...(typeof request.query === 'object' && request.query !== null ? request.query : {}),
-        ...(typeof request.body === 'object' && request.body !== null ? request.body : {}),
-      } as Record<string, unknown>;
-
-      let state = readSsoState(services.config.sessionSecret, String(source['state'] ?? source['RelayState'] ?? ''));
-      if (!state) state = readSsoState(services.config.sessionSecret, String(source['relayState'] ?? ''));
-      if (!state) throw unauthenticated('The single sign-on state is missing or has expired');
-      if (state.provider !== sso.name) throw unauthenticated('The single sign-on state does not match this provider');
-
-      const claims =
-        sso.protocol === 'saml'
-          ? services.auth.parseSamlAssertion(sso, decodeSamlResponse(source['SAMLResponse']), {
-              // Binds the assertion to the request we sent, so a replayed
-              // response from another session is rejected.
-              inResponseTo: state.requestId,
-            })
-          : await services.auth.exchangeOidcCode(
-              sso,
-              String(source['code'] ?? ''),
-              services.auth.ssoRedirectUri(sso.name),
-              // Bound into the signed `state` when the flow started, so a token
-              // replayed from another session is rejected.
-              state.nonce,
-            );
-
-      if (!claims || Object.keys(claims).length === 0) {
-        throw badRequest('The identity provider returned no usable claims');
-      }
-
-      const result = await services.auth.consumeSsoCallback(sso, claims, requestMeta(request));
-      setSessionCookie(reply, services, result.sessionId, result.expiresAt);
-
-      return reply.redirect(safeRedirectPath(state.redirect), 302);
-    },
-  });
-
-  /** SP metadata for a SAML IdP to import. */
-  app.get('/api/auth/sso/:provider/metadata', async (request, reply) => {
-    const services = servicesOf(app);
-    const params = request.params as { provider: string };
-    const sso = services.auth.findSsoConfigurationByName(params.provider);
-    if (!sso) throw notFound('SSO provider', params.provider);
-    if (sso.protocol !== 'saml') throw badRequest(`SSO provider "${sso.name}" is not a SAML provider`);
-
-    return reply
-      .header('content-type', 'application/samlmetadata+xml; charset=utf-8')
-      .send(services.auth.buildSamlMetadata(sso));
-  });
 };
 
 /** Strip the password hash; nothing outside the service should see it. */
 function withoutPassword(user: User & { instanceRole?: string }): Omit<User, 'passwordHash'> {
   const { passwordHash: _passwordHash, instanceRole: _instanceRole, ...rest } = user;
   return rest;
-}
-
-/** Decode the base64 `SAMLResponse` an IdP posts to the ACS endpoint. */
-function decodeSamlResponse(value: unknown): string {
-  if (typeof value !== 'string' || value === '') {
-    throw badRequest('The SAML response is missing');
-  }
-  return Buffer.from(value, 'base64').toString('utf8');
 }
 
 // `app.ts` imports `userRoutes` from this module; the implementation lives in

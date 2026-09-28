@@ -34,8 +34,6 @@ const KNOWN_GAPS: Record<string, string> = {
   'workflow.removeTransition': 'See workflow.transitions.',
   'dashboards.widgets': 'Widgets are returned embedded in the dashboard; there is no separate list route.',
   'admin.users': 'No instance-wide user list for administrators. /api/users requires a project context.',
-  'admin.updateSso': 'SSO configurations can be listed but not edited.',
-  'admin.removeSso': 'SSO configurations can be listed but not deleted.',
   'admin.settings': 'No instance settings route; configuration is environment-driven.',
   'admin.updateSettings': 'No instance settings route; configuration is environment-driven.',
 };

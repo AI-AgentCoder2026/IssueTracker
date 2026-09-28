@@ -6,10 +6,10 @@
  * the device's secure element. The server only ever holds the public key.
  *
  * Verification is delegated to `@simplewebauthn/server`. That is a deliberate
- * choice, in the same spirit as using `xml-crypto` for SAML: WebAuthn's
- * attestation and assertion formats involve CBOR, COSE keys and packed
- * attestation, and getting any of it subtly wrong is how passkey bypasses get
- * shipped. The library is the audited implementation of that specification.
+ * choice: WebAuthn's attestation and assertion formats involve CBOR, COSE keys
+ * and packed attestation, and getting any of it subtly wrong is how passkey
+ * bypasses get shipped. The library is the audited implementation of that
+ * specification.
  *
  * Two properties this module adds on top, because they are the ones an attacker
  * actually probes:

@@ -86,10 +86,11 @@ interface SeedIssue {
 
 const ISSUES: SeedIssue[] = [
   {
-    title: 'Users cannot sign in with SSO after the IdP certificate rotates',
+    title: 'Passkey sign-in fails on Firefox after the server rotates its session secret',
     description:
-      'After the identity provider rotates its signing certificate, every SAML login fails with\n' +
-      '`invalid_signature`. Reproduced on staging with the new certificate in place.',
+      'Users who enrolled a passkey are signed out on every deploy and cannot re-authenticate\n' +
+      'because the challenge cookie was signed with the previous secret. Reproduced locally by\n' +
+      'restarting with a regenerated SESSION_SECRET.',
     type: 'bug',
     priority: 'critical',
     statusKey: 'in_progress',

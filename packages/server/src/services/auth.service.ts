@@ -5,8 +5,7 @@
  *   * local credentials (register / login / password change),
  *   * opaque server-side sessions, API tokens and guest tokens,
  *   * user administration with a full audit trail,
- *   * the `Actor` projection that every route guard consumes, and
- *   * OIDC / SAML single sign-on.
+ *   * the `Actor` projection that every route guard consumes.
  *
  * Secrets follow one rule: only a hash (or an encrypted blob) ever reaches the
  * database. `sessions.id` holds `sha256(sessionId)` so a database leak cannot
@@ -29,12 +28,10 @@ import {
   type AuditAction,
   type AuthProvider,
   type AuthResult,
-  type ExternalIdentity,
   type InstanceRole,
   type ProjectId,
   type Role,
   type Session,
-  type SsoConfiguration,
   type User,
 } from '@tracker/shared';
 import {
@@ -60,8 +57,6 @@ import {
   notFound,
   unauthenticated,
 } from '../errors.ts';
-import { JwksCache, verifyIdToken, type JwtClaims } from './oidc.ts';
-import { verifySamlResponse } from './saml.ts';
 import type { SqlParam } from '../db/connection.ts';
 import type { Services } from './context.ts';
 import type { RequestAuditContext } from './audit.service.ts';
@@ -107,16 +102,6 @@ export interface ListUserOptions {
  * travels alongside the public object. Structurally assignable to `User`.
  */
 export type StoredUser = User & { instanceRole: InstanceRole };
-
-/** Claims after `attribute_map` has been applied. */
-export interface MappedSsoClaims {
-  externalId: string | null;
-  email: string | null;
-  username: string | null;
-  displayName: string | null;
-  avatarUrl: string | null;
-  raw: Record<string, unknown>;
-}
 
 // ---------------------------------------------------------------------------
 // Row shapes. Declared as `type` aliases (not interfaces) so they keep the
@@ -182,90 +167,14 @@ type ApiTokenRow = {
   created_at: string;
 };
 
-type SsoRow = {
-  id: number;
-  name: string;
-  protocol: string;
-  enabled: number;
-  issuer: string | null;
-  client_id: string | null;
-  client_secret_encrypted: string | null;
-  authorization_endpoint: string | null;
-  token_endpoint: string | null;
-  userinfo_endpoint: string | null;
-  jwks_uri: string | null;
-  entity_id: string | null;
-  sso_url: string | null;
-  idp_certificate: string | null;
-  attribute_map: string;
-  allowed_domains: string;
-  auto_provision: number;
-  default_role: string;
-  is_default: number;
-  created_at: string;
-  updated_at: string;
-};
-
-type ExternalIdentityRow = {
-  id: number;
-  user_id: number;
-  provider: string;
-  external_id: string;
-  external_username: string | null;
-  created_at: string;
-  last_login_at: string | null;
-};
-
 const USER_COLUMNS =
   'id, username, email, display_name, avatar_url, password_hash, provider, ' +
   'instance_role, is_active, timezone, locale, email_opt_out, last_login_at, created_at, updated_at';
 
-const SSO_COLUMNS =
-  'id, name, protocol, enabled, issuer, client_id, client_secret_encrypted, ' +
-  'authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri, entity_id, ' +
-  'sso_url, idp_certificate, attribute_map, allowed_domains, auto_provision, ' +
-  'default_role, is_default, created_at, updated_at';
-
-/**
- * Instance role -> the platform role an `Actor` carries when no project is in
- * context. `can()` allow-lists instance administrators before this is ever
- * consulted, so `admin` is a belt-and-braces mapping.
- */
 export const INSTANCE_ROLE_PLATFORM_ROLE: Record<InstanceRole, Role> = {
   admin: 'admin',
   staff: 'maintainer',
   user: 'viewer',
-};
-
-const DEFAULT_SSO_SCOPE = 'openid email profile';
-
-/** Fallback claim names per local field, used when `attribute_map` is empty. */
-const DEFAULT_CLAIM_KEYS: Record<string, string[]> = {
-  externalId: ['sub', 'user_id', 'uid', 'nameid', 'NameID', 'userNameId', 'saml.user_id'],
-  email: ['email', 'mail', 'emailaddress', 'email_address', 'userprincipalname', 'upn'],
-  username: ['preferred_username', 'uid', 'username', 'login', 'cn', 'saml.user_id'],
-  displayName: ['name', 'displayname', 'given_name', 'cn', 'uid'],
-  avatarUrl: ['picture', 'avatar_url', 'avatarurl', 'photo'],
-};
-
-/** Local field aliases accepted inside `attribute_map` values. */
-const FIELD_ALIASES: Record<string, keyof MappedSsoClaims> = {
-  externalid: 'externalId',
-  external_id: 'externalId',
-  sub: 'externalId',
-  subject: 'externalId',
-  userid: 'externalId',
-  email: 'email',
-  mail: 'email',
-  username: 'username',
-  preferred_username: 'username',
-  login: 'username',
-  displayname: 'displayName',
-  display_name: 'displayName',
-  name: 'displayName',
-  avatarurl: 'avatarUrl',
-  avatar_url: 'avatarUrl',
-  picture: 'avatarUrl',
 };
 
 /** Anonymous principal: grants nothing, keeps the context shape total. */
@@ -275,73 +184,6 @@ const ANONYMOUS_ACTOR: Actor = {
   roles: [],
   projectRoles: new Map<ProjectId, Role>(),
 };
-
-/** SSO `state` parameter: provider round trip plus a post-login target. */
-export interface SsoStatePayload {
-  /** SAML `AuthnRequest/@ID`; echoed back as `InResponseTo` for replay defence. */
-  requestId: string;
-  provider: string;
-  protocol: 'oidc' | 'saml';
-  /** Same-origin path to land on after the callback; never an absolute URL. */
-  redirect: string;
-  nonce: string;
-  issuedAt: number;
-}
-
-const SSO_STATE_TTL_MS = 10 * 60 * 1000;
-
-/**
- * Build a tamper-evident, stateless OAuth `state`. There is no state table in
- * the schema, so the payload is HMAC-signed with the instance session secret.
- */
-/** A fresh OIDC nonce, bound to this browser session via the signed state. */
-export function newSsoNonce(): string {
-  return generateToken(16);
-}
-
-/** A fresh SAML AuthnRequest ID, recorded in the signed state for replay defence. */
-export function newSamlRequestId(): string {
-  return `_${generateToken(16)}`;
-}
-
-export function createSsoState(secret: Buffer, payload: Omit<SsoStatePayload, 'issuedAt'>): string {
-  const body: SsoStatePayload = { ...payload, issuedAt: Date.now() };
-  const encoded = Buffer.from(JSON.stringify(body), 'utf8').toString('base64url');
-  const signature = hmacSha256Hex(secret.toString('base64'), encoded);
-  return `${encoded}.${signature}`;
-}
-
-/** Verify and decode a `state`, or `null` when it is forged or expired. */
-export function readSsoState(secret: Buffer, state: string): SsoStatePayload | null {
-  const separator = state.lastIndexOf('.');
-  if (separator <= 0) return null;
-
-  const encoded = state.slice(0, separator);
-  const signature = state.slice(separator + 1);
-  const expected = hmacSha256Hex(secret.toString('base64'), encoded);
-  if (!safeEqual(signature, expected)) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-    if (!parsed || typeof parsed !== 'object') return null;
-    const payload = parsed as Partial<SsoStatePayload>;
-    if (typeof payload.provider !== 'string' || typeof payload.issuedAt !== 'number') return null;
-    if (Date.now() - payload.issuedAt > SSO_STATE_TTL_MS) return null;
-    if (payload.issuedAt - Date.now() > SSO_STATE_TTL_MS) return null;
-    return {
-      provider: payload.provider,
-      protocol: payload.protocol === 'saml' ? 'saml' : 'oidc',
-      redirect: typeof payload.redirect === 'string' ? payload.redirect : '/',
-      nonce: typeof payload.nonce === 'string' ? payload.nonce : '',
-      // States issued before this field existed decode to an empty request id,
-      // which the SAML path treats as "unsolicited" rather than trusted.
-      requestId: typeof payload.requestId === 'string' ? payload.requestId : '',
-      issuedAt: payload.issuedAt,
-    };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Only accept same-origin, path-relative redirect targets so the callback
@@ -355,9 +197,6 @@ export function safeRedirectPath(value: unknown): string {
 }
 
 export class AuthService {
-  /** Short-lived cache of each provider's published signing keys. */
-  private readonly jwksCache = new JwksCache();
-
   private readonly services: Services;
   /**
    * A throw-away hash used to keep the "unknown user" branch of `login` as slow
@@ -933,476 +772,6 @@ export class AuthService {
   }
 
   // -------------------------------------------------------------------------
-  // SSO
-  // -------------------------------------------------------------------------
-
-  /** Enabled IdP configurations, for the login screen. */
-  listEnabledSsoConfigurations(): SsoConfiguration[] {
-    return this.services.db
-      .all<SsoRow>(`SELECT ${SSO_COLUMNS} FROM sso_configurations WHERE enabled = 1 ORDER BY is_default DESC, name ASC`)
-      .map((row) => this.mapSso(row));
-  }
-
-  /** All configurations, enabled or not. Administrator view. */
-  listSsoConfigurations(): SsoConfiguration[] {
-    return this.services.db
-      .all<SsoRow>(`SELECT ${SSO_COLUMNS} FROM sso_configurations ORDER BY name ASC`)
-      .map((row) => this.mapSso(row));
-  }
-
-  /** Find an enabled configuration by its (path-safe) name. */
-  findSsoConfigurationByName(name: string): SsoConfiguration | null {
-    const row = this.services.db.get<SsoRow>(
-      `SELECT ${SSO_COLUMNS} FROM sso_configurations WHERE name = ? AND enabled = 1`,
-      [name],
-    );
-    return row ? this.mapSso(row) : null;
-  }
-
-  /** Default enabled configuration, used when the UI has no picker. */
-  findDefaultSsoConfiguration(): SsoConfiguration | null {
-    const row = this.services.db.get<SsoRow>(
-      `SELECT ${SSO_COLUMNS} FROM sso_configurations WHERE enabled = 1 AND is_default = 1 LIMIT 1`,
-    );
-    return row ? this.mapSso(row) : null;
-  }
-
-  /** The callback URL this instance advertises to an IdP. */
-  ssoRedirectUri(providerName: string): string {
-    return `${this.services.config.publicUrl.replace(/\/$/, '')}/api/auth/sso/${encodeURIComponent(providerName)}/callback`;
-  }
-
-  /**
-   * Build the OIDC authorization URL. No PKCE: the code exchange below is
-   * confidential-client only, so a public client must not use this endpoint
-   * until `code_verifier` is threaded through the signed state.
-   */
-  buildAuthorizationUrl(sso: SsoConfiguration, state: string, redirectUri: string): string {
-    if (!sso.authorizationEndpoint) {
-      throw badRequest(`SSO provider "${sso.name}" has no authorization endpoint configured`);
-    }
-    if (!sso.clientId) {
-      throw badRequest(`SSO provider "${sso.name}" has no client id configured`);
-    }
-
-    const url = new URL(sso.authorizationEndpoint);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('client_id', sso.clientId);
-    url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('scope', DEFAULT_SSO_SCOPE);
-    url.searchParams.set('state', state);
-    return url.toString();
-  }
-
-  /** Build an unsigned, deflated SAML 2.0 AuthnRequest (HTTP-Redirect binding). */
-  buildSamlRedirectUrl(
-    sso: SsoConfiguration,
-    relayState: string,
-    /** Supplied by the caller so it can be recorded in the signed state. */
-    requestId = newSamlRequestId(),
-  ): string {
-    if (!sso.ssoUrl) throw badRequest(`SSO provider "${sso.name}" has no SSO URL configured`);
-
-    const issueInstant = nowIso();
-    const destination = escapeXml(sso.ssoUrl);
-    const acs = escapeXml(this.ssoRedirectUri(sso.name));
-    const issuer = escapeXml(sso.entityId ?? `${this.services.config.publicUrl}/api/auth/sso/${encodeURIComponent(sso.name)}`);
-
-    const xml =
-      `<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ` +
-      `xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ` +
-      `ID="${escapeXml(requestId)}" Version="2.0" IssueInstant="${issueInstant}" ` +
-      `Destination="${destination}" AssertionConsumerServiceURL="${acs}" ` +
-      `ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">` +
-      `<saml:Issuer>${issuer}</saml:Issuer></samlp:AuthnRequest>`;
-
-    const url = new URL(sso.ssoUrl);
-    url.searchParams.set('SAMLRequest', deflateRawSync(Buffer.from(xml, 'utf8')).toString('base64'));
-    url.searchParams.set('RelayState', relayState);
-    return url.toString();
-  }
-
-  /**
-   * SP metadata document for a SAML IdP to import.
-   */
-  buildSamlMetadata(sso: SsoConfiguration): string {
-    const entityId = escapeXml(sso.entityId ?? this.ssoRedirectUri(sso.name));
-    const acs = escapeXml(this.ssoRedirectUri(sso.name));
-    const idpSso = sso.ssoUrl ? escapeXml(sso.ssoUrl) : '';
-
-    return (
-      `<?xml version="1.0" encoding="UTF-8"?>\n` +
-      `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="${entityId}">\n` +
-      `  <md:SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true" ` +
-      `protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">\n` +
-      `    <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat>\n` +
-      (idpSso
-        ? `    <md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" ` +
-          `Location="${acs}" index="0" isDefault="true"/>\n`
-        : '') +
-      `  </md:SPSSODescriptor>\n` +
-      `  <md:Organization><md:OrganizationName xml:lang="en">Issue Tracker</md:OrganizationName>` +
-      `<md:OrganizationDisplayName xml:lang="en">Issue Tracker</md:OrganizationDisplayName>` +
-      `<md:OrganizationURL xml:lang="en">${escapeXml(this.services.config.publicUrl)}</md:OrganizationURL></md:Organization>\n` +
-      `</md:EntityDescriptor>\n`
-    );
-  }
-
-  /**
-   * Structurally parse a base64 SAMLResponse into a flat claim record.
-   *
-   * SECURITY: this reads the document the browser handed us. It does **not**
-   * verify the XML signature against `sso.idp_certificate`, and it is not
-   * capable of detecting a forged assertion. Signature verification (XML-DSIG
-   * over the signed element, issuer/audience checks and replay protection) MUST
-   * be added before an external IdP is trusted. See `consumeSsoCallback`.
-   */
-  parseSamlAssertion(
-    sso: SsoConfiguration,
-    xml: string,
-    options: { inResponseTo?: string | null; allowUnsolicited?: boolean } = {},
-  ): Record<string, unknown> {
-    const certificate = this.readIdpCertificate(sso);
-    if (!certificate) {
-      throw integrationError(
-        'This SAML provider has no IdP certificate configured, so its assertions cannot be verified',
-      );
-    }
-
-    const verified = verifySamlResponse({
-      xml,
-      idpCertificate: certificate,
-      expectedAudience: this.ssoEntityId(),
-      expectedInResponseTo: options.inResponseTo ?? null,
-      allowUnsolicited: options.allowUnsolicited ?? false,
-    });
-
-    // Claims are flattened so `mapSsoClaims` can consume them the same way it
-    // consumes OIDC claims.
-    const claims: Record<string, unknown> = {
-      nameid: verified.nameId,
-      inResponseTo: verified.inResponseTo,
-    };
-    if (verified.notOnOrAfter) claims['notOnOrAfter'] = verified.notOnOrAfter.toISOString();
-    if (verified.issuer) claims['issuer'] = verified.issuer;
-    for (const [key, value] of Object.entries(verified.attributes)) {
-      claims[key] = value;
-      claims[key.toLowerCase()] = value;
-    }
-    return claims;
-  }
-
-  /** Map raw IdP claims onto local fields using `attribute_map`. */
-  mapSsoClaims(sso: SsoConfiguration, claims: Record<string, unknown>): MappedSsoClaims {
-    const lowered = new Map<string, unknown>();
-    for (const [key, value] of Object.entries(claims)) lowered.set(key.toLowerCase(), value);
-
-    const mapped: Partial<Record<keyof MappedSsoClaims, string>> = {};
-    for (const [claimKey, field] of Object.entries(sso.attributeMap)) {
-      const canonical = FIELD_ALIASES[field.trim().toLowerCase()];
-      if (!canonical) continue;
-      const value = claims[claimKey] ?? lowered.get(claimKey.toLowerCase());
-      if (typeof value === 'string' && value.trim() !== '') mapped[canonical] = value.trim();
-    }
-
-    for (const [field, candidates] of Object.entries(DEFAULT_CLAIM_KEYS)) {
-      const canonical = FIELD_ALIASES[field];
-      if (!canonical || mapped[canonical] !== undefined) continue;
-      for (const candidate of candidates) {
-        const value = claims[candidate] ?? lowered.get(candidate.toLowerCase());
-        if (typeof value === 'string' && value.trim() !== '') {
-          mapped[canonical] = value.trim();
-          break;
-        }
-      }
-    }
-
-    const email = mapped.email ?? null;
-    if (email && !mapped.username) {
-      const localPart = email.split('@')[0];
-      if (localPart) mapped.username = localPart;
-    }
-
-    return {
-      externalId: mapped.externalId ?? null,
-      email,
-      username: mapped.username ?? null,
-      displayName: mapped.displayName ?? null,
-      avatarUrl: mapped.avatarUrl ?? null,
-      raw: claims,
-    };
-  }
-
-  /**
-   * Turn protocol-level claims into a local session.
-   *
-   * SECURITY: the incoming claims are trusted as-is. The OIDC path does not
-   * verify the `id_token` signature against the JWKS and the SAML path does not
-   * verify the assertion signature against `sso.idp_certificate`; both are
-   * deliberately out of scope here and MUST be added before an external IdP is
-   * trusted in production. Every other control (domain allow-list,
-   * auto-provisioning, identity linking) is enforced below.
-   */
-  async consumeSsoCallback(
-    sso: SsoConfiguration,
-    claims: Record<string, unknown>,
-    ctx: RequestMeta,
-  ): Promise<AuthResult> {
-    const provider = sso.protocol as AuthProvider;
-    const mapped = this.mapSsoClaims(sso, claims);
-
-    if (!mapped.externalId) {
-      throw unauthenticated('The identity provider did not supply a stable subject identifier');
-    }
-    if (!mapped.email) {
-      throw unauthenticated('The identity provider did not supply an email address');
-    }
-    if (!this.isEmailDomainAllowed(sso, mapped.email)) {
-      const domain = mapped.email.split('@')[1] ?? mapped.email;
-      throw forbidden(`Accounts from ${domain} may not sign in to this instance`);
-    }
-    if (typeof claims['notOnOrAfter'] === 'string' && isPast(claims['notOnOrAfter'])) {
-      throw unauthenticated('The identity assertion has expired');
-    }
-
-    const identity = this.services.db.get<ExternalIdentityRow>(
-      'SELECT * FROM external_identities WHERE provider = ? AND external_id = ?',
-      [provider, mapped.externalId],
-    );
-
-    const user = this.services.db.transaction(() => {
-      let resolved: StoredUser | null;
-      if (identity) {
-        resolved = this.getUser(identity.user_id);
-      } else {
-        const existing = this.services.db.get<UserRow>(
-          'SELECT * FROM users WHERE lower(email) = lower(?)',
-          [mapped.email as string],
-        );
-        if (existing) {
-          resolved = this.mapUser(existing);
-        } else if (sso.autoProvision) {
-          resolved = this.insertUser({
-            username: this.uniqueUsername(mapped.username ?? (mapped.email as string).split('@')[0] ?? 'user'),
-            email: mapped.email as string,
-            displayName: mapped.displayName ?? (mapped.email as string).split('@')[0] ?? 'User',
-            passwordHash: null,
-            provider,
-            instanceRole: 'user',
-            avatarUrl: mapped.avatarUrl,
-          });
-          this.recordAudit(
-            {
-              action: 'user.created',
-              entityType: 'user',
-              entityId: resolved.id,
-              after: { ...this.publicUser(resolved), provisionedBy: `sso:${sso.name}` },
-            },
-            ctx,
-          );
-        } else {
-          throw forbidden('No account is linked to this identity. Ask an administrator for access.');
-        }
-      }
-
-      if (!resolved) throw notFound('User');
-      if (!resolved.isActive) throw forbidden('This account has been deactivated');
-
-      const now = nowIso();
-      this.services.db.run('UPDATE users SET last_login_at = ? WHERE id = ?', [now, resolved.id]);
-      this.upsertExternalIdentity(resolved.id, provider, mapped.externalId as string, mapped.username, ctx);
-      this.recordAudit(
-        {
-          action: 'auth.login',
-          entityType: 'user',
-          entityId: resolved.id,
-          after: { method: provider, provider: sso.name },
-        },
-        ctx,
-      );
-
-      return { ...resolved, lastLoginAt: now };
-    });
-
-    const session = this.createSession(user.id, ctx);
-    return { user: this.publicUser(user), sessionId: session.sessionId, expiresAt: session.expiresAt };
-  }
-
-  /**
-   * Exchange an OIDC authorization code for claims.
-   *
-   * SECURITY: the `id_token` returned by the token endpoint is decoded but not
-   * signature-verified against `jwks_uri`, and the `state`/`nonce` round trip is
-   * not bound to a browser session. Both checks must be added before an
-   * external IdP is trusted.
-   */
-  async exchangeOidcCode(
-    sso: SsoConfiguration,
-    code: string,
-    redirectUri: string,
-    /** Nonce issued in the signed `state`; bound to this browser session. */
-    nonce?: string | null,
-  ): Promise<Record<string, unknown>> {
-    if (!sso.tokenEndpoint) {
-      throw badRequest(`SSO provider "${sso.name}" has no token endpoint configured`);
-    }
-
-    const secret = this.readClientSecret(sso);
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      client_id: sso.clientId ?? '',
-    });
-    if (secret) body.set('client_secret', secret);
-
-    let payload: Record<string, unknown>;
-    try {
-      const response = await fetch(sso.tokenEndpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-        body: body.toString(),
-      });
-      if (!response.ok) {
-        throw integrationError(`Token endpoint responded with ${response.status}`, {
-          provider: sso.name,
-          status: response.status,
-        });
-      }
-      payload = (await response.json()) as Record<string, unknown>;
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AppError') throw error;
-      throw integrationError(`Could not reach the token endpoint for "${sso.name}"`, {
-        provider: sso.name,
-      });
-    }
-
-    const accessToken =
-      typeof payload['access_token'] === 'string' ? payload['access_token'] : null;
-
-    // The `id_token` is verified before any claim is read. If it checks out we
-    // still prefer userinfo, because the endpoint is authoritative and returns
-    // a fresh, normalised view of the subject.
-    if (typeof payload['id_token'] === 'string') {
-      const claims = await this.verifyOidcIdToken(sso, payload['id_token'], nonce);
-
-      if (sso.userinfoEndpoint && accessToken) {
-        try {
-          const response = await fetch(sso.userinfoEndpoint, {
-            headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
-          });
-          if (!response.ok) {
-            throw integrationError(`Userinfo endpoint responded with ${response.status}`, {
-              provider: sso.name,
-              status: response.status,
-            });
-          }
-          return (await response.json()) as Record<string, unknown>;
-        } catch (error) {
-          if (error instanceof Error && error.name === 'AppError') throw error;
-          throw integrationError(`Could not reach the userinfo endpoint for "${sso.name}"`, {
-            provider: sso.name,
-          });
-        }
-      }
-
-      return claims as Record<string, unknown>;
-    }
-
-    throw integrationError(`SSO provider "${sso.name}" returned no usable identity claims`);
-  }
-
-  /**
-   * Verify an OIDC ID token's signature and claims against the provider's JWKS.
-   *
-   * A token that cannot be verified is a hard failure: silently falling back to
-   * the unverified claims is the vulnerability this closes.
-   */
-  async verifyOidcIdToken(
-    sso: SsoConfiguration,
-    idToken: string,
-    nonce?: string | null,
-  ): Promise<JwtClaims> {
-    if (!sso.jwksUri) {
-      throw integrationError(
-        `SSO provider "${sso.name}" has no JWKS URI configured, so its ID tokens cannot be verified`,
-      );
-    }
-    if (!sso.issuer) {
-      throw integrationError(
-        `SSO provider "${sso.name}" has no issuer configured, so the token's issuer cannot be checked`,
-      );
-    }
-    if (!sso.clientId) {
-      throw integrationError(
-        `SSO provider "${sso.name}" has no client id, so the token's audience cannot be checked`,
-      );
-    }
-
-    const jwks = await this.jwksCache.get(sso.jwksUri);
-    try {
-      return verifyIdToken(idToken, jwks, {
-        issuer: sso.issuer,
-        audience: sso.clientId,
-        nonce: nonce ?? null,
-      });
-    } catch (error) {
-      // A key-id mismatch is the common symptom of a rotation. Drop the cache
-      // so the retry sees the new set rather than repeating the failure.
-      if (error instanceof AppError && /key id/i.test(error.message)) {
-        this.jwksCache.invalidate(sso.jwksUri);
-      }
-      throw error;
-    }
-  }
-
-  /** Link a federated identity to a local user, creating the row if needed. */
-  upsertExternalIdentity(
-    userId: number,
-    provider: AuthProvider,
-    externalId: string,
-    username: string | null,
-    ctx: RequestMeta,
-  ): ExternalIdentity {
-    const now = nowIso();
-    this.services.db.run(
-      `INSERT INTO external_identities
-         (user_id, provider, external_id, external_username, last_login_at)
-       VALUES (?,?,?,?,?)
-       ON CONFLICT (provider, external_id)
-       DO UPDATE SET user_id = excluded.user_id,
-                     external_username = excluded.external_username,
-                     last_login_at = excluded.last_login_at`,
-      [userId, provider, externalId, username, now],
-    );
-
-    const row = this.services.db.get<ExternalIdentityRow>(
-      'SELECT * FROM external_identities WHERE provider = ? AND external_id = ?',
-      [provider, externalId],
-    );
-    if (!row) throw internalError('Failed to persist the external identity');
-
-    this.recordAudit(
-      {
-        action: 'user.updated',
-        entityType: 'user',
-        entityId: userId,
-        after: { provider, externalId, externalUsername: username },
-      },
-      ctx,
-    );
-
-    return this.mapExternalIdentity(row);
-  }
-
-  /** Federated identities linked to a user. */
-  listExternalIdentities(userId: number): ExternalIdentity[] {
-    return this.services.db
-      .all<ExternalIdentityRow>('SELECT * FROM external_identities WHERE user_id = ? ORDER BY id', [userId])
-      .map((row) => this.mapExternalIdentity(row));
-  }
-
-  // -------------------------------------------------------------------------
   // Bootstrapping
   // -------------------------------------------------------------------------
 
@@ -1582,45 +951,6 @@ export class AuthService {
     }
     return candidate;
   }
-
-  private isEmailDomainAllowed(sso: SsoConfiguration, email: string): boolean {
-    if (sso.allowedDomains.length === 0) return true;
-    const domain = (email.split('@')[1] ?? '').toLowerCase();
-    return sso.allowedDomains.some((allowed) => allowed.trim().toLowerCase() === domain);
-  }
-
-  private readClientSecret(sso: SsoConfiguration): string | null {
-    if (!sso.clientSecretEncrypted) return null;
-    try {
-      return decrypt(sso.clientSecretEncrypted, this.services.config.encryptionKey);
-    } catch (error) {
-      throw integrationError(`The stored client secret for "${sso.name}" could not be decrypted`);
-    }
-  }
-
-  /**
-   * The IdP's signing certificate, PEM or bare base64, as stored.
-   *
-   * Required for SAML: without it the assertion cannot be verified, and an
-   * unverifiable assertion is refused rather than trusted.
-   */
-  private readIdpCertificate(sso?: SsoConfiguration): string | null {
-    const configured = sso?.idpCertificate ?? null;
-    return configured && configured.trim().length > 0 ? configured : null;
-  }
-
-  /**
-   * This service provider's entity ID, used to check `AudienceRestriction`.
-   *
-   * The IdP compares the audience against whatever entity ID was advertised in
-   * our AuthnRequest, which is the callback URL we expose.
-   */
-  private ssoEntityId(): string {
-    const configured = process.env['SAML_ENTITY_ID'];
-    if (configured && configured.length > 0) return configured;
-    return this.ssoRedirectUri('default').replace(/\/default\/callback$/, '/callback');
-  }
-
   /** Strip the password hash before anything leaves the service. */
   private publicUser(user: StoredUser): Omit<User, 'passwordHash'> {
     const { passwordHash: _passwordHash, ...rest } = user;
@@ -1688,44 +1018,6 @@ export class AuthService {
       createdAt: row.created_at,
     };
   }
-
-  private mapSso(row: SsoRow): SsoConfiguration {
-    return {
-      id: row.id,
-      name: row.name,
-      protocol: row.protocol as SsoConfiguration['protocol'],
-      enabled: row.enabled === 1,
-      issuer: row.issuer,
-      clientId: row.client_id,
-      clientSecretEncrypted: row.client_secret_encrypted,
-      authorizationEndpoint: row.authorization_endpoint,
-      tokenEndpoint: row.token_endpoint,
-      userinfoEndpoint: row.userinfo_endpoint,
-      jwksUri: row.jwks_uri,
-      entityId: row.entity_id,
-      ssoUrl: row.sso_url,
-      idpCertificate: row.idp_certificate,
-      attributeMap: parseRecord(row.attribute_map),
-      allowedDomains: parseStringArray(row.allowed_domains),
-      autoProvision: row.auto_provision === 1,
-      defaultRole: (row.default_role || 'viewer') as Role,
-      isDefault: row.is_default === 1,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  private mapExternalIdentity(row: ExternalIdentityRow): ExternalIdentity {
-    return {
-      id: row.id,
-      userId: asUserId(row.user_id),
-      provider: row.provider as AuthProvider,
-      externalId: row.external_id,
-      externalUsername: row.external_username,
-      createdAt: row.created_at,
-      lastLoginAt: row.last_login_at,
-    };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1781,38 +1073,3 @@ function parseRecord(value: string | null | undefined): Record<string, string> {
   }
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&amp;/g, '&');
-}
-
-/** Decode a JWT payload. Does **not** verify the signature — see the caller. */
-function decodeJwtPayload(token: string): Record<string, unknown> {
-  const segments = token.split('.');
-  const payloadSegment = segments[1];
-  if (!payloadSegment) throw integrationError('The identity token is malformed');
-  try {
-    const json = Buffer.from(payloadSegment, 'base64url').toString('utf8');
-    const parsed: unknown = JSON.parse(json);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('not an object');
-    }
-    return parsed as Record<string, unknown>;
-  } catch {
-    throw integrationError('The identity token payload could not be decoded');
-  }
-}

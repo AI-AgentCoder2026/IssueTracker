@@ -26,9 +26,6 @@ export const API = {
     logout: '/api/auth/logout',
     me: '/api/auth/me',
     changePassword: '/api/auth/password',
-    ssoProviders: '/api/auth/sso/providers',
-    ssoStart: '/api/auth/sso/:provider/start',
-    ssoCallback: '/api/auth/sso/:provider/callback',
     guestRedeem: '/api/auth/guest/redeem',
   },
   users: {
@@ -232,10 +229,6 @@ export const API = {
   // -- admin ---------------------------------------------------------------
   admin: {
     users: '/api/admin/users',
-    ssoConfigurations: '/api/admin/sso',
-    createSso: '/api/admin/sso',
-    updateSso: '/api/admin/sso/:id',
-    removeSso: '/api/admin/sso/:id',
     auditLog: '/api/admin/audit',
     verifyAuditChain: '/api/admin/audit/verify',
     settings: '/api/admin/settings',

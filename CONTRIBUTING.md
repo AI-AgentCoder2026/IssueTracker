@@ -131,9 +131,9 @@ migration corrupts the schema. If you need a new column, add `004_…`.
 
 Add sparingly, and say in the pull request why an existing option was not enough.
 Security-critical specifications are the exception where a vetted library is the
-correct answer: this project uses `@simplewebauthn/server` for WebAuthn and
-`xml-crypto` for SAML XML-DSIG rather than hand-rolling either, because
-hand-rolled CBOR and hand-rolled C14N are how bypasses get shipped.
+correct answer: this project uses `@simplewebauthn/server` for WebAuthn rather
+than hand-rolling it, because hand-rolled CBOR and COSE key handling is how
+bypasses get shipped.
 
 ## Reporting a security issue
 

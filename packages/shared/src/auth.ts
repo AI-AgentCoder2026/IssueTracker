@@ -1,13 +1,13 @@
 /**
- * Authentication contracts: local credentials, SSO/SAML, API tokens and
- * time-bound guest access.
+ * Authentication contracts: local credentials, API tokens and time-bound guest
+ * access.
  */
 
 import { z } from 'zod';
 import type { IsoDateTime, ProjectId, UserId } from './ids.ts';
 import type { Role } from './rbac.ts';
 
-export const AUTH_PROVIDERS = ['local', 'saml', 'oidc', 'ldap', 'guest'] as const;
+export const AUTH_PROVIDERS = ['local', 'ldap', 'guest'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 
 export interface User {
@@ -16,7 +16,7 @@ export interface User {
   email: string;
   displayName: string;
   avatarUrl: string | null;
-  /** Null for SSO-only accounts that have never set a password. */
+  /** Null for an account that has never set a password. */
   passwordHash: string | null;
   provider: AuthProvider;
   /** Instance administrator bypasses per-project membership checks. */
@@ -89,55 +89,6 @@ export interface Session {
   expiresAt: IsoDateTime;
   createdAt: IsoDateTime;
   lastSeenAt: IsoDateTime;
-}
-
-// ---------------------------------------------------------------------------
-// SSO / SAML
-// ---------------------------------------------------------------------------
-
-export const SSO_PROTOCOLS = ['saml', 'oidc'] as const;
-export type SsoProtocol = (typeof SSO_PROTOCOLS)[number];
-
-export interface SsoConfiguration {
-  id: number;
-  name: string;
-  protocol: SsoProtocol;
-  enabled: boolean;
-  /** OIDC: issuer, client id, scopes. */
-  issuer: string | null;
-  clientId: string | null;
-  /** Never returned to clients. */
-  clientSecretEncrypted: string | null;
-  authorizationEndpoint: string | null;
-  tokenEndpoint: string | null;
-  userinfoEndpoint: string | null;
-  jwksUri: string | null;
-  /** SAML: entity id, SSO URL, X.509 certificate. */
-  entityId: string | null;
-  ssoUrl: string | null;
-  idpCertificate: string | null;
-  /** Attribute mapping from IdP claim to local field. */
-  attributeMap: Record<string, string>;
-  /** Domains allowed to use this IdP. Empty means any. */
-  allowedDomains: string[];
-  /** Auto-create an account on first login. */
-  autoProvision: boolean;
-  defaultRole: Role;
-  isDefault: boolean;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
-
-/** Links a local user to a federated identity. */
-export interface ExternalIdentity {
-  id: number;
-  userId: UserId;
-  provider: AuthProvider;
-  /** The IdP's stable subject/user id. */
-  externalId: string;
-  externalUsername: string | null;
-  createdAt: IsoDateTime;
-  lastLoginAt: IsoDateTime | null;
 }
 
 // ---------------------------------------------------------------------------

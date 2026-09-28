@@ -125,7 +125,7 @@ export function hashOpaque(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Symmetric encryption (integration tokens, SSO client secrets)
+// Symmetric encryption (integration tokens and other stored secrets)
 // ---------------------------------------------------------------------------
 
 const ALGORITHM = 'aes-256-gcm';
