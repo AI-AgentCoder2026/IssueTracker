@@ -292,6 +292,7 @@ Everything has a working default; set only what you need.
 | `WEB_CLIENT_DIR` | `../web/dist` | Built SPA location |
 | `ENABLE_SCHEDULER` | `true` | Background jobs (off in tests) |
 | `TRUST_PROXY` | `false` | Honour `X-Forwarded-*` |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | `false` | Permit webhook targets on loopback/private addresses |
 | `LOG_LEVEL` | `info` | Pino log level |
 | `BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` | — | Seed an admin on first boot |
 
@@ -314,6 +315,21 @@ are unaffected.
 
 STARTTLS is only attempted when the server advertises it, and **credentials are
 refused outright** rather than sent over an unencrypted channel.
+
+### Outgoing webhooks
+
+Webhook targets are refused if they point at a loopback, private, link-local or
+reserved address, at registration **and** again at delivery after DNS
+resolution — the second check is what stops a hostname that is public when you
+register it and private by the time the event fires. This is a server-side
+request forgery defence: the *server* makes the request, so an internal target
+would otherwise hand a `webhook.manage` holder a route to this tracker's own
+admin API and, on a cloud host, to the instance metadata service that returns
+IAM credentials. Targets are also checked for a non-http scheme and for embedded
+credentials.
+
+Set `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` if you genuinely deliver to an
+internal service.
 
 ### Passkeys
 

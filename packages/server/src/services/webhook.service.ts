@@ -15,6 +15,8 @@
  * failures rather than being retried forever.
  */
 
+import * as dns from 'node:dns';
+import * as net from 'node:net';
 import type { WebhookId } from '@tracker/shared';
 import { badRequest, notFound } from '../errors.ts';
 import { generateToken, hmacSha256Hex } from '../lib/crypto.ts';
@@ -124,7 +126,92 @@ function backoffMs(attempt: number): number {
   return Math.min(MINUTE_MS * 2 ** Math.max(0, attempt - 1), 60 * MINUTE_MS);
 }
 
-/** Only http(s) targets, and never a credential-bearing URL. */
+/**
+ * Whether an operator has opted into delivering to private addresses.
+ *
+ * Self-hosted setups legitimately want a webhook delivered to an internal
+ * service, so this is an explicit, documented opt-in rather than a blanket ban.
+ * It is read at registration *and* at delivery, so a name that later resolves
+ * inward is caught too.
+ */
+function privateTargetsAllowed(): boolean {
+  const flag = (process.env['WEBHOOK_ALLOW_PRIVATE_TARGETS'] ?? '').toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(flag);
+}
+
+/** True when an IPv4 address is anything other than ordinary public unicast. */
+function isPrivateIpv4(address: string): boolean {
+  const parts = address.split('.');
+  if (parts.length !== 4) return true; // Unparseable: refuse rather than guess.
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return true;
+
+  const a = octets[0] ?? 0;
+  const b = octets[1] ?? 0;
+
+  if (a === 0) return true; // "this" network
+  if (a === 10) return true; // RFC 1918
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local, including cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
+  if (a === 192 && b === 168) return true; // RFC 1918
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a === 192 && b === 0) return true; // IETF protocol assignments
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
+  if (a >= 224) return true; // multicast, reserved and broadcast
+  return false;
+}
+
+/** True when an IPv6 address is loopback, unique-local or link-local. */
+function isPrivateIpv6(address: string): boolean {
+  const value = address.toLowerCase().replace(/^\[|\]$/g, '');
+  if (value === '::1' || value === '::') return true;
+
+  // An IPv4-mapped address (::ffff:10.0.0.1) must be judged by what it wraps.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value);
+  if (mapped?.[1]) return isPrivateIpv4(mapped[1]);
+
+  if (value.startsWith('fc') || value.startsWith('fd')) return true; // unique local
+  if (/^fe[89ab]/.test(value)) return true; // link-local
+  if (value.startsWith('ff')) return true; // multicast
+  return false;
+}
+
+/** Hostnames that always resolve inward. */
+const INTERNAL_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost', 'ip6-loopback']);
+
+/**
+ * Decide whether a hostname is safe to send a webhook to.
+ *
+ * Checking only the scheme leaves a straightforward server-side request
+ * forgery, because the *server* makes the request: `http://127.0.0.1:4000/…`
+ * reaches the tracker's own admin API, and `http://169.254.169.254/…` reads
+ * cloud instance metadata, which on most hosts hands back IAM credentials.
+ *
+ * A hostname is resolved as well as judged, because a name that resolves to
+ * 127.0.0.1 is exactly as dangerous as the literal form.
+ */
+export function isInternalTarget(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (INTERNAL_HOSTNAMES.has(host)) return true;
+  if (host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+
+  // Classify by the actual address family. Feeding an IPv6 literal to the
+  // IPv4 classifier made it look unparseable, and "unparseable" means
+  // "refuse", so every IPv6 target was rejected.
+  const family = net.isIP(host);
+  if (family === 4) return isPrivateIpv4(host);
+  if (family === 6) return isPrivateIpv6(host);
+
+  // A public-looking *name* is judged again at delivery, once it resolves -
+  // that is where a rebinding attack is caught.
+  return false;
+}
+
+/**
+ * Validate a webhook target: http(s) only, never credential-bearing, and -
+ * unless the operator has opted in - never pointing back into this host.
+ */
 function assertTargetUrl(raw: string): string {
   let url: URL;
   try {
@@ -138,7 +225,42 @@ function assertTargetUrl(raw: string): string {
   if (url.username !== '' || url.password !== '') {
     throw badRequest('Webhook targetUrl must not embed credentials');
   }
+  if (!privateTargetsAllowed() && isInternalTarget(url.hostname)) {
+    throw badRequest(
+      'Webhook targetUrl must not point at a loopback, private or link-local address. ' +
+        'Set WEBHOOK_ALLOW_PRIVATE_TARGETS=true if this is an intentional internal integration.',
+      { hostname: url.hostname },
+    );
+  }
   return url.toString();
+}
+
+/**
+ * Resolve a hostname and decide whether every address it points at is public.
+ *
+ * This is the check that matters, and it has to be async because Node's DNS
+ * API is. It runs immediately before the request is made, so a name that
+ * resolved to a public address at registration but to 127.0.0.1 by delivery
+ * time is refused rather than followed into the host's own network.
+ */
+export async function resolvesInternally(hostname: string): Promise<boolean> {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isInternalTarget(host)) return true;
+  if (net.isIP(host) !== 0) return false;
+
+  try {
+    const answers = await dns.promises.lookup(host, { all: true });
+    if (answers.length === 0) return true; // nothing to reach
+    return answers.some((entry) =>
+      entry.family === 6 ? isPrivateIpv6(entry.address) : isPrivateIpv4(entry.address),
+    );
+  } catch {
+    // Unresolvable. That is not evidence of an internal target - it is just a
+    // name we cannot look up - so allow the attempt and let the HTTP client
+    // report the real failure. Refusing here would block legitimate public
+    // hooks whenever DNS is briefly unavailable.
+    return false;
+  }
 }
 
 export class WebhookService {
@@ -350,6 +472,32 @@ export class WebhookService {
       delivery.webhook_id,
     ]);
     if (!webhook) throw notFound('Webhook', delivery.webhook_id);
+
+    // Re-resolve immediately before sending. The hostname was vetted at
+    // registration, but a name can begin resolving inward afterwards, and by
+    // this point the *server* is the one making the request. This is the check
+    // that actually stops the SSRF.
+    if (!privateTargetsAllowed()) {
+      const target = (() => {
+        try {
+          return new URL(webhook.target_url);
+        } catch {
+          return null;
+        }
+      })();
+      if (!target || (await resolvesInternally(target.hostname))) {
+        this.services.db.run(
+          "UPDATE webhook_deliveries SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
+          [
+            'Refused: target resolves to a loopback, private or link-local address',
+            nowIso(),
+            delivery.id,
+          ],
+        );
+        return false;
+      }
+    }
+
     if (!bool(webhook.enabled) || webhook.disabled_at !== null) {
       this.services.db.run(
         "UPDATE webhook_deliveries SET status = 'failed', error = ?, completed_at = ? WHERE id = ?",
