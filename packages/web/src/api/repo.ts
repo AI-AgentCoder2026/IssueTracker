@@ -1325,6 +1325,93 @@ export const webhookApi = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Audit trail
+// ---------------------------------------------------------------------------
+
+export interface AuditEntry {
+  id: number;
+  actorId: number | null;
+  actorName: string;
+  actorEmail: string;
+  /** `system` for background jobs. */
+  ipAddress: string;
+  userAgent: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  projectId: number | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  /** SHA-256 over this row's own fields. */
+  rowHash: string;
+  /** The preceding entry's hash, forming the chain. */
+  prevHash: string | null;
+  createdAt: string;
+}
+
+function toAuditEntry(value: unknown): AuditEntry {
+  const r = asRecord(value);
+  const actorId = r.actorId;
+  return {
+    id: num(r.id),
+    // Zero is the reserved anonymous id, not an absent value.
+    actorId: actorId === null || actorId === undefined ? null : num(actorId),
+    actorName: str(r.actorName, 'system'),
+    actorEmail: str(r.actorEmail),
+    ipAddress: str(r.ipAddress),
+    userAgent: str(r.userAgent),
+    action: str(r.action),
+    entityType: str(r.entityType),
+    entityId: strOrNull(r.entityId),
+    projectId: r.projectId === null || r.projectId === undefined ? null : num(r.projectId),
+    before: r.before === null || r.before === undefined ? null : asRecord(r.before),
+    after: r.after === null || r.after === undefined ? null : asRecord(r.after),
+    rowHash: str(r.rowHash),
+    prevHash: strOrNull(r.prevHash),
+    createdAt: str(r.createdAt),
+  };
+}
+
+export const auditApi = {
+  async list(
+    query: Record<string, string | number | undefined>,
+    signal?: AbortSignal,
+  ): Promise<{ entries: AuditEntry[]; total: number; nextCursor: number | null }> {
+    const parts = Object.entries(query)
+      .filter(([, v]) => v !== undefined && v !== '')
+      .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`);
+    const suffix = parts.length > 0 ? `?${parts.join('&')}` : '';
+    const raw = await http.get<unknown>(`${API.admin.auditLog}${suffix}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    const r = asRecord(unwrap(raw));
+    return {
+      entries: asArray(r.entries).map(toAuditEntry),
+      total: num(r.total),
+      nextCursor: r.nextCursor === null || r.nextCursor === undefined ? null : num(r.nextCursor),
+    };
+  },
+
+  async verifyChain(
+    limit?: number,
+    signal?: AbortSignal,
+  ): Promise<{ valid: boolean; checked: number; brokenAt: number | null; message: string }> {
+    const suffix = limit === undefined ? '' : `?limit=${limit}`;
+    const raw = await http.get<unknown>(`${API.admin.verifyAuditChain}${suffix}`, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    const r = asRecord(unwrap(raw));
+    const brokenAt = r.brokenAtId;
+    return {
+      valid: bool(r.valid),
+      checked: num(r.entriesChecked),
+      brokenAt: brokenAt === null || brokenAt === undefined ? null : num(brokenAt),
+      message: str(r.message),
+    };
+  },
+};
+
 export const exportApi = {
   /**
    * Downloads an export. Returns the blob and the filename the server chose

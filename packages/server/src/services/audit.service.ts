@@ -297,9 +297,14 @@ export class AuditService {
       params.push(query.to);
     }
 
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    // `conditions` is the clause list *without* the keyword. It used to carry
+    // `WHERE` itself while the assembly added a second one, so every filtered
+    // request emitted `WHERE WHERE action = ?` and answered 500 -- the audit
+    // trail could not be filtered at all.
+    const conditions = clauses.join(' AND ');
+    const where = conditions === '' ? '' : ` WHERE ${conditions}`;
     const total = Number(
-      this.db.scalar<number>(`SELECT COUNT(*) AS c FROM audit_log ${where}`, params) ?? 0,
+      this.db.scalar<number>(`SELECT COUNT(*) AS c FROM audit_log${where}`, params) ?? 0,
     );
 
     const limit = Math.min(query.limit ?? 100, 500);
@@ -307,14 +312,11 @@ export class AuditService {
     // Keyset pagination: `id < cursor` stays stable while new rows arrive.
     // The clause is only appended when there is actually a cursor — emitting
     // `WHERE id < ?` with no bound value would be a placeholder/param mismatch.
-    let sql = `SELECT * FROM audit_log`;
+    let sql = `SELECT * FROM audit_log${where}`;
     const bind: Array<string | number> = [...params];
 
-    if (where) {
-      sql += ` WHERE ${where}`;
-    }
     if (query.cursor) {
-      sql += `${where ? ' AND' : ' WHERE'} id < ?`;
+      sql += `${conditions === '' ? ' WHERE' : ' AND'} id < ?`;
       bind.push(query.cursor);
     }
     sql += ' ORDER BY id DESC LIMIT ?';

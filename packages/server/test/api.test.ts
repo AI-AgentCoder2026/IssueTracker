@@ -746,6 +746,102 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('audit trail over HTTP', () => {
+  it('lists entries newest first with a total and a cursor', async () => {
+    const response = await get(API.admin.auditLog);
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.ok(Array.isArray(response.body.entries));
+    assert.equal(typeof response.body.total, 'number');
+    assert.ok(response.body.entries.length > 0, 'creating a project is itself audited');
+
+    const ids = response.body.entries.map((e: { id: number }) => e.id);
+    assert.deepEqual(
+      ids,
+      [...ids].sort((a: number, b: number) => b - a),
+      'entries must arrive newest first',
+    );
+
+    const entry = response.body.entries[0];
+    assert.ok(entry.rowHash, 'every entry carries the hash that chains it');
+    assert.ok(entry.createdAt, 'every entry is timestamped');
+    assert.ok('actorName' in entry);
+  });
+
+  it('filters by action and entity type', async () => {
+    const created = await post(API.projects.create, { key: 'AUDIT', name: 'Audit' });
+    assert.equal(created.status, 200);
+
+    const byAction = await get(`${API.admin.auditLog}?action=project.created`);
+    assert.equal(byAction.status, 200, `action filter failed: ${JSON.stringify(byAction.body)}`);
+    assert.ok(byAction.body.entries.length > 0);
+    for (const entry of byAction.body.entries) {
+      assert.equal(entry.action, 'project.created', 'an action filter must not leak other rows');
+    }
+
+    const byEntity = await get(`${API.admin.auditLog}?entityType=project`);
+    assert.equal(byEntity.status, 200);
+    for (const entry of byEntity.body.entries) {
+      assert.equal(entry.entityType, 'project');
+    }
+  });
+
+  it('refuses to let an audit row be edited, and still verifies', async () => {
+    const clean = await get(API.admin.verifyAuditChain);
+    assert.equal(clean.status, 200, JSON.stringify(clean.body));
+    assert.equal(clean.body.valid, true, `chain should be intact: ${clean.body.message}`);
+    assert.ok(clean.body.entriesChecked > 0, 'a check that examined nothing proves nothing');
+    assert.equal(clean.body.brokenAtId, null);
+
+    // The immutability claim is enforced by the database, not by the API, so
+    // the tamper has to be attempted through SQL to be tested at all -- and it
+    // is refused there too. A `BEFORE UPDATE` trigger raises, so this is not
+    // "the API declined": there is no path through this connection.
+    const target = tracker.db.get<{ id: number }>('SELECT id FROM audit_log ORDER BY id LIMIT 1');
+    assert.ok(target, 'precondition: there is a row');
+    assert.throws(
+      () => tracker.db.run('UPDATE audit_log SET action = ? WHERE id = ?', [
+        'tampered.action',
+        target.id,
+      ]),
+      /append-only|not permitted/i,
+      'the database must refuse an update to the audit log',
+    );
+
+    // And a delete, for the same reason.
+    assert.throws(
+      () => tracker.db.run('DELETE FROM audit_log WHERE id = ?', [target.id]),
+      /append-only|not permitted/i,
+      'the database must refuse a delete from the audit log',
+    );
+
+    const after = await get(API.admin.verifyAuditChain);
+    assert.equal(after.body.valid, true, 'the chain is still intact after the refused attempts');
+  });
+
+  it('refuses the audit trail without the instance permission', async () => {
+    const user = await post(API.users.create, {
+      username: 'auditviewer',
+      email: 'auditviewer@example.com',
+      displayName: 'Audit Viewer',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'auditviewer', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    for (const path of [API.admin.auditLog, API.admin.verifyAuditChain]) {
+      const response = await fetch(`${baseUrl}${path}`, { headers: { cookie: cookie as string } });
+      assert.equal(response.status, 403, `${path} is instance-admin only`);
+    }
+  });
+});
+
 describe('outgoing webhooks over HTTP', () => {
   let hookProject = 0;
   let hookId = 0;
