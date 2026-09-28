@@ -165,6 +165,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | SSO / SAML | ✅ | Both verified: OIDC against the provider JWKS (`services/oidc.ts`), SAML via XML-DSIG with wrapping-attack defence (`services/saml.ts`) |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
+| Biometric mobile app login | ⚠️ | **Partially met.** Passkeys via WebAuthn give Face ID / Touch ID / fingerprint sign-in in any browser, and that is fully implemented. The literal requirement — a *mobile app* that authenticates biometrically — is **not** met: this project ships no native app. |
 | Automatic PII/secret scrubbing | ✅ | `scrubSecrets()` — 11 credential patterns + configurable extras |
 
 ### Analytics and technology
@@ -521,7 +522,10 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 Deliberately not built yet, in rough priority order:
 
-- **Video recording with audio across every browser** — capture, review and
+- **A native mobile app.** The "biometric mobile app login" requirement is only
+  partially met: WebAuthn passkeys give Face ID / Touch ID / fingerprint
+  sign-in in any browser, but there is no native app and therefore no in-app
+  biometric API.- **Video recording with audio across every browser** — capture, review and
   inline playback all work, but `getDisplayMedia` audio is Chromium-only, and
   there is no transcription or playback-speed control.
 - SAML metadata import from an IdP, and signed AuthnRequest support.
