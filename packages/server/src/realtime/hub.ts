@@ -119,14 +119,23 @@ export class RealtimeHub {
     this.presence.delete(`${userId}:${connectionId}`);
   }
 
-  /** Presence for a project, de-duplicated by user (highest activity first). */
+  /**
+   * Presence for a project, de-duplicated by user (highest activity first).
+   *
+   * Scoping is strict: an entry is visible to project P if and only if it
+   * names P. An entry with a null `projectId` — a socket that has connected
+   * but not yet chosen anywhere — belongs to no project and is therefore
+   * visible to none. Treating null as "everywhere" would broadcast the display
+   * names of connected users to projects they were never granted access to.
+   */
   presenceForProject(projectId: number): PresenceEntry[] {
     const byUser = new Map<number, PresenceEntry & { connectionId: string }>();
     for (const entry of this.presence.values()) {
-      if (entry.issueId === null && entry.projectId !== null && entry.projectId !== projectId) continue;
-      if (entry.projectId !== null && entry.projectId !== projectId) continue;
+      if (entry.projectId !== projectId) continue;
       const existing = byUser.get(entry.userId);
-      // Prefer an entry that is actually looking at an issue.
+      // Prefer an entry that is actually looking at an issue. Scoping has
+      // already guaranteed both candidates are the same project, so this
+      // cannot promote another project's entry.
       if (!existing || (existing.issueId === null && entry.issueId !== null)) {
         byUser.set(entry.userId, entry);
       }

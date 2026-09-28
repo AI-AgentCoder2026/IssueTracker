@@ -523,7 +523,21 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 
 ### Known gaps
 
-- **The bundled SAML client is a service provider, not an identity provider.**
+- **SSO configurations can be read but not written through the API.** The
+  OIDC and SAML verification code is complete and tested, and
+  `GET /api/admin/sso` lists what is configured — but there is no create,
+  update or delete at either the route or the service layer, so a deployment
+  has to insert rows into `sso_configurations` directly. Treat SSO as
+  *verifiable but not yet manageable from the product*. The same applies to
+  instance settings: configuration is environment-driven and there is no
+  `/api/admin/settings` route.
+- **14 declared contract entries have no route.** `@tracker/shared` promises
+  more surface than the server implements. The list is asserted in
+  `packages/server/test/contract.test.ts` as an explicit, commented allowlist
+  so the gap is tracked and new drift fails CI. The substantive ones are
+  per-status and per-transition workflow CRUD (the whole workflow is `PUT` as
+  one document instead), and an instance-wide admin user list.
+- The bundled SAML client is a service provider, not an identity provider.
   It validates inbound assertions; it does not implement the full SAML
   metadata/artifact-resolution ecosystem. OIDC is likewise confidential-client
   only — no PKCE — so a public client must not use it yet.

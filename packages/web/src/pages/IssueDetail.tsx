@@ -51,7 +51,7 @@ export function IssueDetail(): JSX.Element {
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
   const { user } = useAuth();
-  const { setWatching, presenceFor } = useRealtime();
+  const { setWatching, presenceFor, subscribeProject } = useRealtime();
 
   const issueId = asIssueId(Number(params.issueId));
   const projectId = asProjectId(Number(params.projectId));
@@ -89,6 +89,11 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
 
   useEffect(() => setWatching(issueId, 'viewing issue'), [issueId, setWatching]);
   useEffect(() => () => setWatching(null), [setWatching]);
+
+  // Presence is broadcast on the project channel, so reading "who else is here"
+  // requires joining it. Without this the avatars below never populate, and the
+  // server has nobody to broadcast this user's own presence to either.
+  useEffect(() => subscribeProject(projectId), [projectId, subscribeProject]);
 
   useEffect(() => {
     if (issueQuery.data === null) return;
