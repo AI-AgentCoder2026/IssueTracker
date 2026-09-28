@@ -334,6 +334,14 @@ export function registerRealtimeGateway(app: FastifyInstance, hub: RealtimeHub):
           }
 
           case 'ping':
+            // A ping means "still here", so it must refresh presence. Clients
+            // heartbeat on this event every PRESENCE_HEARTBEAT_MS (25s) while
+            // the hub prunes entries older than 45s. Without this, anyone
+            // reading an issue for longer than that quietly disappeared from
+            // every other viewer's "who else is here" -- and an empty avatar
+            // row is indistinguishable from a quiet project, so nothing would
+            // look wrong.
+            recordPresence({});
             send(connection, { event: 'pong', ref: parsed.ref, at: new Date().toISOString() });
             return;
 

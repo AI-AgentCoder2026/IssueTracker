@@ -737,6 +737,67 @@ describe('websocket gateway', () => {
     }
   });
 
+  it('refreshes presence on a heartbeat', async () => {
+    // The client heartbeats with `ping` every PRESENCE_HEARTBEAT_MS (25s) and
+    // the server prunes presence after 45s. If `ping` did not refresh
+    // `lastSeenAt`, everyone would quietly vanish from each other's "who else
+    // is viewing" after 45 seconds of actively reading an issue -- and an empty
+    // avatar row is indistinguishable from a quiet project, so nothing would
+    // look wrong.
+    const client = new Client(cookies.get('root') as string);
+    try {
+      await client.ready();
+      await client.next((f) => f.event === 'hello');
+      client.send({ event: 'subscribe.project', projectId: memberOfOne, ref: 'h' });
+      await client.next((f) => f.ref === 'h');
+
+      const before = tracker.services.realtime
+        .presenceForProject(memberOfOne)
+        .find((e) => e.username === 'root')?.lastSeenAt;
+      assert.ok(before, 'the subscriber should have a presence entry');
+
+      // ISO timestamps have millisecond resolution, so a short pause is enough
+      // to tell "refreshed" from "left alone".
+      await new Promise((r) => setTimeout(r, 1100));
+      client.send({ event: 'ping', ref: 'beat' });
+      await client.next((f) => f.ref === 'beat');
+
+      const after = tracker.services.realtime
+        .presenceForProject(memberOfOne)
+        .find((e) => e.username === 'root')?.lastSeenAt;
+      assert.ok(after);
+      assert.ok(
+        Date.parse(after) > Date.parse(before as string),
+        `a ping must refresh presence: ${before} -> ${after}`,
+      );
+    } finally {
+      client.close();
+    }
+  });
+
+  it('keeps presence alive across the prune threshold', async () => {
+    // The end-to-end consequence: with the heartbeat working, an entry that is
+    // younger than the TTL survives a prune. This is the property the previous
+    // test exists to protect, stated as the server's own rule.
+    const client = new Client(memberCookie);
+    try {
+      await client.ready();
+      await client.next((f) => f.event === 'hello');
+      client.send({ event: 'subscribe.project', projectId: memberOfOne, ref: 'k' });
+      await client.next((f) => f.ref === 'k');
+
+      const before = tracker.services.realtime.presenceForProject(memberOfOne).length;
+      assert.equal(tracker.services.realtime.prunePresence(), 0, 'a fresh entry is not stale');
+      assert.equal(
+        tracker.services.realtime.presenceForProject(memberOfOne).length,
+        before,
+        'pruning must not drop a connected subscriber',
+      );
+    } finally {
+      client.close();
+    }
+  });
+
   it('drops a closed socket from the presence list', async () => {
     const first = new Client(memberCookie);
     await first.ready();
