@@ -238,6 +238,50 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 }
 
+/**
+ * Performs one request and returns the response as a file.
+ *
+ * Export is the only endpoint that answers with an attachment rather than JSON,
+ * and it is `POST` because the request body carries a filter. Parsing it through
+ * `request` would try to `JSON.parse` a CSV and fail, so the download path is
+ * separate and reads `Content-Disposition` for the filename the server chose.
+ */
+export async function download(path: string, body: unknown): Promise<{ filename: string; blob: Blob }> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: headersFor(true),
+    body: JSON.stringify(body),
+  });
+
+  if (response.status === 401) {
+    broadcastUnauthorized();
+    throw await readError(response);
+  }
+  if (!response.ok) throw await readError(response);
+
+  const disposition = response.headers.get('content-disposition') ?? '';
+  // The server pins the filename; the quoted form is the one it sends.
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return {
+    filename: match?.[1] ?? 'export',
+    blob: await response.blob(),
+  };
+}
+
+/** Hands a downloaded blob to the browser as a file the user keeps. */
+export function saveFile(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoking immediately can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export const http = {
   get: <T>(path: string, options?: Omit<RequestOptions, 'method' | 'body' | 'form'>) =>
     request<T>(path, { ...options, method: 'GET' }),

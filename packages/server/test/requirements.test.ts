@@ -82,7 +82,6 @@ const MUST_REACH_FROM_UI: Record<string, string> = {
 const NOT_YET_IN_UI: Record<string, string> = {
   'archive.candidates': 'Stale-issue archiving is a scheduled job and an API. No screen lists what it would archive.',
   'archive.run': 'The archive run can be triggered by API or the scheduler; no button calls it.',
-  'export.run': 'JSON/CSV/Markdown export is available over the API only.',
   'sla.forIssue': 'SLA state is computed and served; the issue page shows the timing strip but not the per-issue SLA clock.',
   'webhooks.list': 'Webhook delivery, signing and retry all work; there is no configuration screen.',
   'users.create': 'User administration is API-only; the interface has no people or account screen.',

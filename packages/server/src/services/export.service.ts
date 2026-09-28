@@ -238,7 +238,12 @@ export class ExportService {
     // full schema restores the defaults, then the service does the filtering.
     const base = searchQuerySchema.parse({ ...input.filter, limit: 500 }) as IssueSearchQuery;
     if (input.projectId !== undefined) {
-      base.projectId = Number(input.projectId) as ProjectId;
+      // The search filter is `projectIds` — a plural array. Assigning a singular
+      // `projectId` set a key the schema does not declare, so it was stripped
+      // on parse and the search ran unfiltered: "export this project" returned
+      // every project the caller could see, which for an instance admin is the
+      // whole instance. This is the field the search actually understands.
+      base.projectIds = [Number(input.projectId) as ProjectId];
     }
     const options = visible ? { visibleProjectIds: visible } : {};
 

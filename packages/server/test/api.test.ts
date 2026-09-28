@@ -746,6 +746,105 @@ describe('attachment upload over HTTP', () => {
   });
 });
 
+describe('data export over HTTP', () => {
+  let expProject = 0;
+  let expIds: number[] = [];
+
+  before(async () => {
+    const created = await post(API.projects.create, { key: 'EXP', name: 'Export' });
+    assert.equal(created.status, 200, `project create failed: ${JSON.stringify(created.body)}`);
+    expProject = created.body.project.id;
+    for (const title of ['export me one', 'export me two', 'unrelated work']) {
+      const issue = await post(API.issues.create, { projectId: expProject, title });
+      assert.equal(issue.status, 200, `issue create failed: ${JSON.stringify(issue.body)}`);
+      expIds.push(issue.body.issue.id);
+    }
+  });
+
+  it('answers with a file, not JSON', async () => {
+    const response = await fetch(`${baseUrl}${API.export.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: sessionCookie },
+      body: JSON.stringify({ projectId: expProject, format: 'csv' }),
+    });
+    assert.equal(response.status, 200);
+
+    // The client downloads this; it must not be something the JSON path could parse.
+    const disposition = response.headers.get('content-disposition') ?? '';
+    assert.match(disposition, /attachment/, 'an export is always a file the user saves');
+    assert.match(disposition, /filename="[^"]+"/, 'the server names the file');
+    assert.ok(
+      !(response.headers.get('content-type') ?? '').includes('application/json'),
+      'a CSV export must not claim to be JSON',
+    );
+
+    const body = await response.text();
+    assert.match(body, /export me one/, 'the export contains the project issues');
+  });
+
+  it('exports only the requested issues', async () => {
+    const response = await fetch(`${baseUrl}${API.export.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: sessionCookie },
+      body: JSON.stringify({ projectId: expProject, format: 'json', issueIds: [expIds[0] as number] }),
+    });
+    assert.equal(response.status, 200);
+    const parsed = JSON.parse(await response.text()) as { issues: unknown[] };
+    assert.equal(parsed.issues.length, 1, 'a selection export must not widen');
+  });
+
+  it('treats an omitted filter as "everything", not "nothing"', async () => {
+    // The trap: sending empty arrays would read as "priority in ()" and export
+    // zero issues, so a user with no filters applied would get an empty file.
+    const bare = await fetch(`${baseUrl}${API.export.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: sessionCookie },
+      body: JSON.stringify({ projectId: expProject, format: 'json', filter: {} }),
+    });
+    const withEmptyArrays = await fetch(`${baseUrl}${API.export.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: sessionCookie },
+      body: JSON.stringify({
+        projectId: expProject,
+        format: 'json',
+        filter: { priorities: [], states: [], types: [] },
+      }),
+    });
+    assert.equal(bare.status, 200);
+    assert.equal(withEmptyArrays.status, 200);
+
+    const bareCount = (JSON.parse(await bare.text()) as { issues: unknown[] }).issues.length;
+    const emptyCount = (JSON.parse(await withEmptyArrays.text()) as { issues: unknown[] }).issues.length;
+    assert.equal(bareCount, 3);
+    assert.equal(emptyCount, 3, 'empty filter lists must not narrow the export to nothing');
+  });
+
+  it('refuses an export from a user without the permission', async () => {
+    const user = await post(API.users.create, {
+      username: 'expoutsider',
+      email: 'expoutsider@example.com',
+      displayName: 'Exp Outsider',
+      password: 'Sup3rSecret!Pass',
+    });
+    assert.equal(user.status, 201);
+    const login = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ login: 'expoutsider', password: 'Sup3rSecret!Pass' }),
+    });
+    const cookie = (login.headers.getSetCookie() ?? [])
+      .map((c) => c.split(';')[0] as string)
+      .find((c) => c.startsWith('tracker_session='));
+
+    const response = await fetch(`${baseUrl}${API.export.run}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: cookie as string },
+      body: JSON.stringify({ projectId: expProject, format: 'json' }),
+    });
+    assert.equal(response.status, 403, 'issues must not be exportable by a non-member');
+  });
+});
+
 describe('bulk editing over HTTP', () => {
   let bulkProject = 0;
   let bulkIds: number[] = [];

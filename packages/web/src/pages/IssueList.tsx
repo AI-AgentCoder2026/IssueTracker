@@ -27,6 +27,7 @@ import { Avatar } from '../components/Avatar';
 import { Badge } from '../components/Badge';
 import { BulkEditBar } from '../components/BulkEditBar';
 import { Button } from '../components/Button';
+import { ExportControl } from '../components/ExportControl';
 import { EmptyState, ErrorState } from '../components/EmptyState';
 import { Field, Select } from '../components/Select';
 import { useToast } from '../components/Toast';
@@ -59,6 +60,25 @@ const EMPTY_FILTERS: SearchFilters = {
   unassignedOnly: false,
   sort: 'updated_desc',
 };
+
+/**
+ * The on-screen filters, shaped for the export endpoint.
+ *
+ * Empty arrays are dropped rather than sent, so "no priority filter" is not
+ * read as "priority in the empty set" and exported as nothing.
+ */
+function filtersForExport(filters: SearchFilters, debouncedQuery: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (debouncedQuery !== '') out['q'] = debouncedQuery;
+  for (const key of ['states', 'types', 'priorities', 'assigneeIds', 'labelIds'] as const) {
+    if (filters[key].length > 0) out[key] = filters[key];
+  }
+  if (filters.dueWithin !== undefined) out['dueWithin'] = filters.dueWithin;
+  if (filters.overdueOnly) out['overdueOnly'] = true;
+  if (filters.unassignedOnly) out['unassignedOnly'] = true;
+  // Sort is a presentation concern; an export has its own order.
+  return out;
+}
 
 export function IssueList(): JSX.Element {
   const params = useParams();
@@ -156,6 +176,11 @@ export function IssueList(): JSX.Element {
           <Button onClick={results.refetch} loading={results.isRefreshing}>
             Refresh
           </Button>
+          <ExportControl
+            projectId={Number(projectId)}
+            selectedIds={selectedIds}
+            filter={filtersForExport(filters, debouncedQuery)}
+          />
           <Link className="btn btn--primary" to={`/p/${projectId}/issues/new`}>
             New issue
           </Link>

@@ -20,7 +20,7 @@ import type {
   Repository,
 } from '@tracker/shared';
 
-import { API, fill, http, type QueryParams } from './client';
+import { API, download, fill, http, type QueryParams } from './client';
 import {
   passkeyAuthenticationResponseSchema,
   passkeyRegistrationResponseSchema,
@@ -1078,6 +1078,17 @@ export const dedupeApi = {
 
   dismiss: (linkId: number) =>
     http.delete<unknown>(fill(API.dedupe.dismiss, { linkId })),
+};
+
+export const exportApi = {
+  /**
+   * Downloads an export. Returns the blob and the filename the server chose
+   * rather than saving it, so the caller can report what happened before the
+   * browser hands the file over.
+   */
+  async run(body: Record<string, unknown>): Promise<{ filename: string; blob: Blob }> {
+    return download(API.export.run, body);
+  },
 };
 
 // ---------------------------------------------------------------------------

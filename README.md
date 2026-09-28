@@ -186,7 +186,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | Full-text search queries | ✅ | FTS5 over issues and comments, with bm25 ranking |
 | Custom filtering | ✅ | 20 filter dimensions, keyset pagination |
-| Data export | ⚠️ | JSON, RFC-4180 CSV, Markdown. **API only** — export is well tested and works, but the interface offers no export button. |
+| Data export | ✅ | JSON, RFC-4180 CSV, Markdown. Reachable from the issue list toolbar; exports the current selection if there is one, otherwise the current filters. |
 | Git version-control linkages | ✅ | `project_repositories` + `issue_references`; branches/commits/MRs per issue, with naming-rule auto-linking. Branch *rules* themselves are API-only. |
 | Custom metric dashboard widgets | ✅ | 16 widget types, drag-to-arrange grid, per-role visibility |
 | SLA breach countdown timers | ⚠️ | Response + resolution clocks, business-hours aware. **Partly API-only**: the issue page shows the timing strip, but the per-issue SLA clock, the at-risk list and policy management have no screen. |
