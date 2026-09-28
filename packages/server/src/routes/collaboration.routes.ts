@@ -115,7 +115,7 @@ export const attachmentRoutes: FastifyPluginAsync = async (app: FastifyInstance)
       { isOwnerOfResource: isUploader },
     );
 
-    ctx.services.attachments.remove(attachmentId, Number(ctx.actor.userId));
+    await ctx.services.attachments.remove(attachmentId, Number(ctx.actor.userId));
     return { deleted: true };
   });
 };

@@ -142,7 +142,9 @@ export const MUTABLE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/gif',
   'image/webp',
-  'image/svg+xml',
+  // SVG is deliberately absent. It is a script-execution vector: an uploaded
+  // one opened from disk runs in a file:// origin, and rendering it inline
+  // would run it here. Screenshots can be uploaded as PNG or WebP.
   'application/pdf',
   'text/plain',
   'text/csv',

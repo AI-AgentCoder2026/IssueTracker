@@ -94,7 +94,11 @@ export class AttachmentService {
 
       // Content-addressed name: identical bytes reuse one file on disk.
       const extension = extname(input.filename).slice(0, 12).replace(/[^A-Za-z0-9.]/g, '');
-      const storedName = join('blobs', `${checksum}${extension}`);
+      // Always a forward slash. `join` would use the platform separator, so a
+  // database written on Windows stored `blobs\\<hash>` and a copy moved to
+  // Linux would no longer resolve. The value is a database column, not a
+  // path used directly by the OS.
+  const storedName = `blobs/${checksum}${extension}`;
       const finalPath = this.resolveStoredPath(storedName);
 
       const existing = await stat(finalPath).catch(() => null);
@@ -193,7 +197,7 @@ export class AttachmentService {
   resolveDownloadPath(attachmentId: number): { path: string; attachment: IssueAttachment } {
     const attachment = this.getById(attachmentId);
 
-    const expected = join('blobs', `${attachment.checksum}${extname(attachment.storedName)}`);
+    const expected = `blobs/${attachment.checksum}${extname(attachment.storedName)}`;
     if (attachment.storedName !== expected) {
       throw badRequest('Attachment record is inconsistent and cannot be served');
     }
@@ -215,11 +219,24 @@ export class AttachmentService {
     return info.size;
   }
 
-  remove(attachmentId: number, actorId: number): void {
+  /**
+   * Remove an attachment, and its blob once nothing else references it.
+   *
+   * Async on purpose: the unlink is awaited so the caller learns the file is
+   * actually gone. Fire-and-forget would report success while the blob was
+   * still on disk, and a rejected unlink would surface as an unhandled
+   * rejection rather than an error the caller can see.
+   */
+  async remove(attachmentId: number, actorId: number): Promise<void> {
     const attachment = this.getById(attachmentId);
     const projectId = this.services.db.scalar<number>('SELECT project_id FROM issues WHERE id = ?', [
       attachment.issueId,
     ]);
+
+    // Resolve the blob path *before* deleting the row. Afterwards the id is
+    // gone, so `resolveDownloadPath` throws: the file is left on disk and the
+    // caller is handed a 404 for a delete that actually happened.
+    const blobPath = this.resolveDownloadPath(attachmentId).path;
 
     this.services.db.run('DELETE FROM attachments WHERE id = ?', [attachmentId]);
 
@@ -231,8 +248,7 @@ export class AttachmentService {
       ]) ?? 0,
     );
     if (stillReferenced === 0) {
-      const { path } = this.resolveDownloadPath(attachmentId);
-      void rm(path, { force: true });
+      await rm(blobPath, { force: true });
     }
 
     this.services.activity.record({

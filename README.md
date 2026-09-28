@@ -150,7 +150,7 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | --- | --- | --- |
 | Rich-text comment logs | ✅ | Markdown bodies, edited/deleted tracked on the timeline |
 | @mentions | ✅ | Resolved to users who can see the issue; unknown handles stay literal |
-| Multi-format attachments | ✅ | SHA-256 content-addressed blobs, MIME allow-list, magic-byte check |
+| Multi-format attachments | ✅ | SHA-256 content-addressed blobs, MIME allow-list, magic-byte check, traversal defence. SVG is refused — see [Security](#security) |
 | Automated email/system notifications | ✅ | 16 event types, per-user preferences, durable `email_outbox` drained over SMTP or a relay webhook |
 | Interactive Kanban boards | ✅ | Fractional positions, optimistic moves, WIP badges |
 | Real-time co-authoring presence | ✅ | `realtime/gateway.ts`, heartbeat + pruning |
@@ -512,6 +512,9 @@ concurrently. CI runs `typecheck`, `test` and a production `build`.
 - Uploads: server-generated content-addressed names (removing the path-traversal
   class), MIME allow-list, magic-byte verification, and a re-check that the
   resolved path stays inside the upload root.
+- **SVG is refused as an upload type.** It is a script-execution vector: an
+  uploaded one opened from disk runs in a `file://` origin. Screenshots upload
+  as PNG or WebP.
 - Webhook deliveries are signed; inbound GitLab webhooks are verified in
   constant time and de-duplicated by event id so retries cannot double-apply.
 - Login is rate-limited per IP; a global limiter backs everything else.
