@@ -497,7 +497,14 @@ function toWidgetPosition(value: unknown): WidgetPosition {
 }
 
 export function toWidget(value: unknown): DashboardWidget {
-  const w = asRecord(unwrap(value));
+  // Not `unwrap`. A *rendered* widget carries a `data` key of its own, and
+  // unwrapping one hands back that payload instead of the widget -- blanking
+  // its id, type, title, filters and limit, so every widget on every rendered
+  // dashboard arrived as a default "Issue list" with no data.
+  //
+  // A widget is identified by having a `type`; a bare `{ data }` envelope
+  // never does. So only unwrap when there is no widget in sight.
+  const w = asRecord(isRecord(value) && 'type' in value ? value : unwrap(value));
   return {
     id: num(w.id),
     dashboardId: num(w.dashboardId) as Dashboard['id'],
@@ -511,7 +518,7 @@ export function toWidget(value: unknown): DashboardWidget {
 }
 
 export function toRenderedWidget(value: unknown): RenderedWidget {
-  const w = asRecord(unwrap(value));
+  const w = asRecord(isRecord(value) && 'type' in value ? value : unwrap(value));
   return { ...toWidget(w), data: toWidgetData(w.data) };
 }
 

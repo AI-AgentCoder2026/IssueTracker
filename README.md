@@ -492,7 +492,8 @@ packages/server/test/
 └── api.test.ts            end-to-end over HTTP
 
 packages/web/src/
-└── lib/format.test.ts     duration, date, size and table-cell rendering
+├── lib/format.test.ts     duration, date, size and table-cell rendering
+└── api/normalize.test.ts  defensive payload parsing, widget rendering
 ```
 
 Every server test gets its own in-memory database, so suites are isolated and
