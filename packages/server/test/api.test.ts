@@ -685,6 +685,67 @@ describe('version-control linkage over HTTP', () => {
  * between them -- path parameters, shared-schema validation, and the status
  * codes a client actually branches on.
  */
+describe('attachment upload over HTTP', () => {
+  let attachTo = 0;
+
+  before(async () => {
+    const created = await post(API.issues.create, { projectId, title: 'accepts log attachments' });
+    assert.equal(created.status, 200, `issue create failed: ${JSON.stringify(created.body)}`);
+    attachTo = created.body.issue.id;
+  });
+
+  it('accepts a multipart upload and lists it against the issue', async () => {
+    const form = new FormData();
+    form.append('file', new Blob(['deployment log line one\nline two\n'], { type: 'text/plain' }), 'deploy.log');
+
+    const response = await fetch(`${baseUrl}/api/issues/${attachTo}/attachments`, {
+      method: 'POST',
+      headers: { cookie: sessionCookie },
+      body: form,
+    });
+    // Read once: the body cannot be both read and parsed.
+    const text = await response.text();
+    assert.equal(response.status, 201, `upload failed: ${text}`);
+
+    const created = JSON.parse(text) as {
+      attachment: { id: number; filename: string; mimeType: string; sizeBytes: number };
+    };
+    assert.equal(created.attachment.filename, 'deploy.log');
+    assert.equal(created.attachment.mimeType, 'text/plain');
+    assert.ok(created.attachment.sizeBytes > 0, 'the stored size must be measured, not assumed');
+
+    const listed = await get(`/api/issues/${attachTo}/attachments`);
+    assert.equal(listed.status, 200);
+    assert.ok(
+      listed.body.attachments.some((a: { id: number }) => a.id === created.attachment.id),
+      'the upload must appear in the issue’s attachment list',
+    );
+
+    // And it must be downloadable, or the upload achieved nothing.
+    const download = await fetch(`${baseUrl}/api/attachments/${created.attachment.id}`, {
+      headers: { cookie: sessionCookie },
+    });
+    assert.equal(download.status, 200);
+    assert.match(await download.text(), /deployment log line one/);
+  });
+
+  it('rejects a request that is not multipart', async () => {
+    const response = await post(`/api/issues/${attachTo}/attachments`, { filename: 'x.log' });
+    assert.equal(response.status, 400, 'a JSON body cannot be an upload');
+  });
+
+  it('rejects a multipart body with no file part', async () => {
+    const form = new FormData();
+    form.append('commentId', '1');
+    const response = await fetch(`${baseUrl}/api/issues/${attachTo}/attachments`, {
+      method: 'POST',
+      headers: { cookie: sessionCookie },
+      body: form,
+    });
+    assert.equal(response.status, 400, 'a multipart body must actually carry a file');
+  });
+});
+
 describe('workflow editing endpoints', () => {
   const base = (suffix: string) => `/api/projects/${projectId}/workflow${suffix}`;
 

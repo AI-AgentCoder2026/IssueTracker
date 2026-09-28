@@ -477,6 +477,7 @@ packages/server/test/
 ├── gitlab.test.ts         source-of-truth modes, conflict resolution, loops
 ├── realtime.test.ts       hub fan-out, presence isolation, live WebSocket
 ├── contract.test.ts       every declared route constant is actually routed
+├── client-contract.test.ts the SPA only calls endpoints the server serves
 ├── migration.test.ts      upgrade path from a previously-migrated database
 ├── encoding.test.ts       no mojibake, replacement characters or stray BOMs
 ├── search.test.ts         FTS queries, filters, export

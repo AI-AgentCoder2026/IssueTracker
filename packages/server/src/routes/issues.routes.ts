@@ -8,6 +8,7 @@
  */
 
 import {
+  API,
   can,
   createCommentSchema,
   createIssueSchema,
@@ -306,6 +307,57 @@ export const issueRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   });
 
   // -- attachments ---------------------------------------------------------
+  app.post(API.issues.upload, async (request, reply) => {
+    const issueId = parseId((request.params as { issueId: string }).issueId, 'issue');
+    const ctx = ctxOf(request);
+    const issue = ctx.services.issues.getById(issueId);
+
+    if (ctx.guest) {
+      if (!ctx.guest.canComment) throw forbidden('This guest link may not attach files');
+      if (ctx.guest.issueId !== null && ctx.guest.issueId !== issueId) {
+        throw forbidden('This guest link is scoped to a different issue');
+      }
+    } else {
+      requirePermission(request, 'attachment.create', Number(issue.projectId));
+    }
+
+    if (!request.isMultipart()) {
+      throw badRequest('An attachment must be sent as multipart/form-data with a "file" part');
+    }
+
+    const file = await request.file();
+    if (!file) throw badRequest('The multipart request carried no file');
+
+    // `fields` arrives before the file part is consumed; each entry is either
+    // a plain field (which has `value`) or another file.
+    const field = (name: string): string | undefined => {
+      const entry = file.fields?.[name];
+      const first = Array.isArray(entry) ? entry[0] : entry;
+      return first && 'value' in first ? String(first.value) : undefined;
+    };
+
+    const commentIdRaw = field('commentId');
+    const commentId =
+      commentIdRaw === undefined ? null : parseId(commentIdRaw, 'comment');
+    const declaredSize = field('size');
+
+    // The service owns size limits, content sniffing, path resolution and the
+    // SVG refusal; this route only adapts the HTTP body to its input.
+    const attachment = await ctx.services.attachments.upload(
+      {
+        issueId,
+        commentId,
+        filename: file.filename,
+        declaredMimeType: file.mimetype,
+        stream: file.file,
+        ...(declaredSize !== undefined ? { expectedSize: Number(declaredSize) } : {}),
+      },
+      Number(ctx.actor.userId),
+    );
+
+    return reply.code(201).send({ attachment });
+  });
+
   app.get('/api/issues/:issueId/attachments', async (request) => {
     const issueId = parseId((request.params as { issueId: string }).issueId, 'issue');
     const ctx = ctxOf(request);

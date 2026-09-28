@@ -642,7 +642,9 @@ export const notificationApi = {
     return out;
   },
   setPreference: (event: NotificationEvent, inApp: boolean, email: boolean) =>
-    http.patch<unknown>(API.notifications.preferences, { event, inApp, email }),
+    // `PUT`, not `PATCH`: the server replaces the whole preference set, so a
+    // PATCH here answered 405.
+    http.put<unknown>(API.notifications.preferences, { event, inApp, email }),
 };
 
 // ---------------------------------------------------------------------------
@@ -651,14 +653,17 @@ export const notificationApi = {
 
 export const gitlabApi = {
   async connection(projectId: ProjectId, signal?: AbortSignal): Promise<GitLabConnectionPublic | null> {
+    // `gitlab.connections` (plural) is the read route; the singular constant
+    // is the create-or-update POST, so the singular one here 404'd.
     return toGitLabConnection(
-      await http.get<unknown>(fill(API.gitlab.connection, { projectId }), {
+      await http.get<unknown>(fill(API.gitlab.connections, { projectId }), {
         ...(signal !== undefined ? { signal } : {}),
       }),
     );
   },
   save: (projectId: ProjectId, body: Record<string, unknown>) =>
-    http.put<unknown>(fill(API.gitlab.update, { projectId }), body),
+    // PATCH, not PUT: the server patches the connection in place.
+    http.patch<unknown>(fill(API.gitlab.update, { projectId }), body),
   remove: (projectId: ProjectId) => http.delete<unknown>(fill(API.gitlab.remove, { projectId })),
   test: (body: { baseUrl: string; accessToken: string; gitlabProjectPath?: string }) =>
     http.post<unknown>(API.gitlab.test, body),
