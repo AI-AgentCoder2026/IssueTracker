@@ -238,7 +238,7 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
           <p className="page-subtitle">
             Reported{' '}
             {issue.reporterId === null ? 'by an unknown user' : `by user ${issue.reporterId}`} on{' '}
-            {formatDateTime(issue.createdAt)} Â· updated {formatRelative(issue.updatedAt)} Â· v{issue.version}
+            {formatDateTime(issue.createdAt)} · updated {formatRelative(issue.updatedAt)} · v{issue.version}
           </p>
         </div>
         <div className="toolbar">
@@ -323,7 +323,7 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
             {commentsQuery.isLoading ? (
               <SkeletonRows rows={3} height="52px" />
             ) : comments.length === 0 ? (
-              <EmptyState icon="ðŸ’¬" title="No comments yet" description="Start the discussion below." />
+              <EmptyState icon="💬" title="No comments yet" description="Start the discussion below." />
             ) : (
               <div>
                 {comments.map((comment) => (
@@ -361,7 +361,7 @@ const repositoriesQuery = useQuery((signal) => vcsApi.repositories(projectId, si
             )}
             <MentionInput
               label="Add a comment"
-              placeholder="Share an updateâ€¦ use @ to mention a teammate"
+              placeholder="Share an update… use @ to mention a teammate"
               value={commentBody}
               onChange={setCommentBody}
               busy={postComment.isPending}
@@ -699,7 +699,7 @@ function CommentRow({
             {comment.attachments.length > 0 ? (
               <div className="row" style={{ gap: 4, marginTop: 4 }}>
                 {comment.attachments.map((attachment) => (
-                  <Badge key={attachment.id}>ðŸ“Ž {attachment.filename}</Badge>
+                  <Badge key={attachment.id}>📎 {attachment.filename}</Badge>
                 ))}
               </div>
             ) : null}

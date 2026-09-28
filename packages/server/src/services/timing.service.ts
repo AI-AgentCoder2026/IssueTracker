@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Timing math and the per-issue timeline.
  *
  * Everything here is derived from timestamps already on the issue row, so this

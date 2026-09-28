@@ -1,7 +1,7 @@
 /**
  * Widget frame plus the `WidgetType` â†’ renderer registry.
  *
- * `WIDGET_RENDERERS` is typed as `Record<WidgetType, â€¦>`, so every one of the 16
+ * `WIDGET_RENDERERS` is typed as `Record<WidgetType, …>`, so every one of the 16
  * widget types in `WIDGET_TYPES` must resolve to a renderer or the build fails.
  * Which renderer runs is decided by the payload's `kind`, which the server
  * chooses per widget; list items carry their own `href` so the UI needs no
@@ -131,7 +131,7 @@ export function WidgetCard({
             onClick={async () => {
               const ok = await confirm({
                 title: 'Remove widget',
-                message: `Remove â€œ${widget.title}â€ from this dashboard?`,
+                message: `Remove “${widget.title}” from this dashboard?`,
                 confirmLabel: 'Remove',
                 destructive: true,
               });

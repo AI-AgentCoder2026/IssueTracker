@@ -22,7 +22,7 @@ export function ProjectSwitcher(): JSX.Element {
           aria-expanded={open}
           onClick={toggle}
         >
-          <span className="switcher-key">{activeProject?.key ?? 'â€”'}</span>
+          <span className="switcher-key">{activeProject?.key ?? '—'}</span>
           <span className="grow truncate" style={{ textAlign: 'left' }}>
             {activeProject?.name ?? 'Select a project'}
           </span>
@@ -70,7 +70,7 @@ export function ProjectSwitcher(): JSX.Element {
               void navigate('/projects');
             }}
           >
-            All projectsâ€¦
+            All projects…
           </MenuItem>
         </>
       )}

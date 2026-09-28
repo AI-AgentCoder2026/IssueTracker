@@ -61,7 +61,7 @@ function TimingItem({ label, value }: { label: string; value: string }): JSX.Ele
 export function Timeline({ timeline, isLoading, liveEvents = [] }: TimelineProps): JSX.Element {
   if (isLoading) return <SkeletonRows rows={5} height="38px" />;
   if (timeline === null) {
-    return <EmptyState icon="ðŸ•“" title="No activity yet" description="Changes to this issue will appear here." />;
+    return <EmptyState icon="🕓" title="No activity yet" description="Changes to this issue will appear here." />;
   }
 
   const seen = new Set(timeline.events.map((event) => event.id));
@@ -71,7 +71,7 @@ export function Timeline({ timeline, isLoading, liveEvents = [] }: TimelineProps
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   if (merged.length === 0) {
-    return <EmptyState icon="ðŸ•“" title="No activity yet" description="Changes to this issue will appear here." />;
+    return <EmptyState icon="🕓" title="No activity yet" description="Changes to this issue will appear here." />;
   }
 
   return (
@@ -107,19 +107,19 @@ export function Timeline({ timeline, isLoading, liveEvents = [] }: TimelineProps
 }
 
 function describe(value: unknown): string {
-  if (value === null || value === undefined || value === '') return 'â€”';
+  if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
 function markerFor(type: ActivityEvent['type']): string {
-  if (type.startsWith('comment.')) return 'ðŸ’¬';
-  if (type.startsWith('gitlab.')) return 'ðŸ”—';
+  if (type.startsWith('comment.')) return '💬';
+  if (type.startsWith('gitlab.')) return '🔗';
   if (type.startsWith('sla.')) return 'â±';
-  if (type.startsWith('attachment.')) return 'ðŸ“Ž';
+  if (type.startsWith('attachment.')) return '📎';
   if (type === 'issue.transitioned') return 'â†’';
   if (type === 'issue.created') return '+';
   if (type === 'issue.assigned' || type === 'issue.unassigned') return '@';
-  if (type === 'issue.archived' || type === 'issue.unarchived') return 'ðŸ—„';
-  return 'â€¢';
+  if (type === 'issue.archived' || type === 'issue.unarchived') return '🗄️';
+  return '•';
 }

@@ -141,7 +141,7 @@ export function NotificationBell({ projectId }: NotificationBellProps): JSX.Elem
           onClick={toggle}
           style={{ position: 'relative' }}
         >
-          <span aria-hidden="true">ðŸ””</span>
+          <span aria-hidden="true">🔔</span>
           {unread > 0 ? (
             <span className="bell-count" aria-hidden="true">
               {unread > 99 ? '99+' : unread}
@@ -180,7 +180,7 @@ export function NotificationBell({ projectId }: NotificationBellProps): JSX.Elem
                 <ErrorState error={error} title="Could not load notifications" />
               </div>
             ) : (feed?.notifications.length ?? 0) === 0 ? (
-              <EmptyState icon="ðŸ”•" title="You're all caught up" description="No notifications yet." />
+              <EmptyState icon="🔕" title="You're all caught up" description="No notifications yet." />
             ) : (
               (feed?.notifications ?? []).slice(0, 12).map((notification) => (
                 <Link

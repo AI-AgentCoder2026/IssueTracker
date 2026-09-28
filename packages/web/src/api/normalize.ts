@@ -4,7 +4,7 @@
  * The shared package pins domain shapes but not every response *envelope*.
  * Rather than sprinkling casts through the pages, each read goes through a narrow
  * normaliser here: it accepts the bare payload or a `{ data }` wrapper and
- * returns a fully-populated type. Every function is total â€” a malformed payload
+ * returns a fully-populated type. Every function is total — a malformed payload
  * degrades to an empty list instead of throwing inside a render.
  */
 

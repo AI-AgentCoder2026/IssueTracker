@@ -478,6 +478,7 @@ packages/server/test/
 ├── realtime.test.ts       hub fan-out, presence isolation, live WebSocket
 ├── contract.test.ts       every declared route constant is actually routed
 ├── migration.test.ts      upgrade path from a previously-migrated database
+├── encoding.test.ts       no mojibake, replacement characters or stray BOMs
 ├── search.test.ts         FTS queries, filters, export
 ├── dedupe.test.ts         duplicate scoring and dismissal
 ├── sla.test.ts            clock settlement, breach, at-risk windows
