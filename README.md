@@ -165,7 +165,6 @@ to Postgres means reinterpreting two lines, not rewriting every query.
 | SSO / SAML | ✅ | Both verified: OIDC against the provider JWKS (`services/oidc.ts`), SAML via XML-DSIG with wrapping-attack defence (`services/saml.ts`) |
 | Immutable audit trails | ✅ | Hash-chained rows + `BEFORE UPDATE`/`BEFORE DELETE` triggers that `RAISE(ABORT)` |
 | Time-bound guest access tokens | ✅ | Expiry, max-use, project scope, optional issue scope, revoke |
-| Biometric mobile app login | ⚠️ | Passkeys via WebAuthn — Face ID / Touch ID / fingerprint in any browser. No native app, so no in-app biometric API. |
 | Automatic PII/secret scrubbing | ✅ | `scrubSecrets()` — 11 credential patterns + configurable extras |
 
 ### Analytics and technology
@@ -529,7 +528,6 @@ Deliberately not built yet, in rough priority order:
 
 - **A real embedding model** behind the duplicate-detection interface.
 - **Postgres adapter** — the query layer is deliberately portable.
-- Mobile app with biometric login.
 - Saved searches and per-user dashboard layouts.
 
 ---
