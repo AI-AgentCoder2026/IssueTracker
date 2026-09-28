@@ -223,7 +223,15 @@ export class ExportService {
     }
 
     if (!input.filter) {
-      throw badRequest('An export needs either `issueIds` or a `filter`');
+      // The request type advertises a top-level `projectId`, but it was only
+      // read inside this filter branch — so `{ projectId }` on its own either
+      // threw or was silently ignored. Honour it: that is what the type
+      // promises, and it is what "export this project" should mean.
+      if (input.projectId !== undefined) {
+        input = { ...input, filter: { projectId: input.projectId } as unknown as typeof input.filter };
+      } else {
+        throw badRequest('An export needs `issueIds`, a `filter`, or a `projectId`');
+      }
     }
 
     // `searchQuerySchema.partial()` is what the contract accepts; re-applying the
@@ -451,10 +459,31 @@ function stripExportColumns(row: ExportRow): Issue {
 }
 
 /** RFC 4180: quote when the field holds a comma, quote, CR or LF; double quotes. */
+/**
+ * Render one CSV cell.
+ *
+ * Two things are handled, and the second is the important one:
+ *
+ *  * RFC 4180 quoting — a value containing a comma, quote or newline is wrapped
+ *    and its quotes doubled, so a row cannot be split by a crafted title.
+ *  * **Formula neutralisation.** A cell whose first character is `=`, `+`, `-`
+ *    or `@` is executed by Excel, LibreOffice and Google Sheets when the file is
+ *    opened — `=HYPERLINK("http://evil", "click")` in an issue title becomes a
+ *    live link in the reader's session. Prefixing a single quote makes the value
+ *    text to the spreadsheet while keeping it readable, which is the standard
+ *    mitigation. Tab and carriage return are the same attack with a different
+ *    first byte.
+ */
 function csvCell(value: unknown): string {
   const text = value === null || value === undefined ? '' : String(value);
-  if (/[",\r\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
-  return text;
+
+  const needsQuoting = /[",\r\n]/.test(text) || /^[=+\-@\t\r]/.test(text);
+  if (!needsQuoting) return text;
+
+  // A leading apostrophe is only needed for the formula characters; the rest
+  // are handled by ordinary quoting.
+  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 function renderCsv(rows: ExportRow[], now: string): string {
